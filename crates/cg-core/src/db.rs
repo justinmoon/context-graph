@@ -1,11 +1,10 @@
 use crate::{model::{Edge, EdgeType, Node, NodeType}, Result};
-use kuzu::{Connection, Database as KuzuDatabase, SystemConfig};
+use kuzu::{Connection, Database as KuzuDatabase, SystemConfig, Value};
 use std::path::Path;
 use tracing::{debug, info};
 
 pub struct Database {
-    conn: Connection,
-    _db: KuzuDatabase,
+    db: Box<KuzuDatabase>,
 }
 
 impl Database {
@@ -18,13 +17,16 @@ impl Database {
         }
 
         let system_config = SystemConfig::default();
-        let db = KuzuDatabase::new(path, system_config)?;
-        let conn = Connection::new(&db)?;
+        let db = Box::new(KuzuDatabase::new(path, system_config)?);
 
-        let mut database = Self { conn, _db: db };
+        let mut database = Self { db };
         database.initialize_schema()?;
         
         Ok(database)
+    }
+
+    fn get_conn(&self) -> Result<Connection<'_>> {
+        Ok(Connection::new(&self.db)?)
     }
 
     pub fn initialize_schema(&mut self) -> Result<()> {
@@ -42,24 +44,27 @@ impl Database {
     }
 
     fn check_schema_exists(&mut self) -> Result<bool> {
-        let result = self.conn.query("MATCH (n:Node) RETURN count(n) LIMIT 1");
+        let conn = self.get_conn()?;
+        let result = conn.query("MATCH (n:Node) RETURN count(n) LIMIT 1");
         Ok(result.is_ok())
     }
 
     fn create_schema(&mut self) -> Result<()> {
         info!("Creating node and relationship tables");
+        let conn = self.get_conn()?;
 
-        self.conn.query("CREATE NODE TABLE Node(id STRING, node_type STRING, name STRING, file STRING, body STRING, start_line INT32, end_line INT32, PRIMARY KEY(id))")?;
+        conn.query("CREATE NODE TABLE Node(id STRING, node_type STRING, name STRING, file STRING, body STRING, start_line INT32, end_line INT32, PRIMARY KEY(id))")?;
         
-        self.conn.query("CREATE NODE TABLE Metadata(key STRING, value STRING, PRIMARY KEY(key))")?;
+        conn.query("CREATE NODE TABLE Metadata(key STRING, value STRING, PRIMARY KEY(key))")?;
         
-        self.conn.query("CREATE REL TABLE Edge(FROM Node TO Node, edge_type STRING)")?;
+        conn.query("CREATE REL TABLE Edge(FROM Node TO Node, edge_type STRING)")?;
 
         Ok(())
     }
 
     fn set_schema_version(&mut self, version: i32) -> Result<()> {
-        self.conn.query(&format!(
+        let conn = self.get_conn()?;
+        conn.query(&format!(
             "CREATE (m:Metadata {{key: 'schema_version', value: '{}'}})",
             version
         ))?;
@@ -67,6 +72,7 @@ impl Database {
     }
 
     pub fn insert_node(&mut self, node: &Node) -> Result<()> {
+        let conn = self.get_conn()?;
         let start_line = node.start_line.map(|l| l as i32).unwrap_or(-1);
         let end_line = node.end_line.map(|l| l as i32).unwrap_or(-1);
         
@@ -81,11 +87,12 @@ impl Database {
             end_line
         );
         
-        self.conn.query(&query)?;
+        conn.query(&query)?;
         Ok(())
     }
 
     pub fn insert_edge(&mut self, edge: &Edge) -> Result<()> {
+        let conn = self.get_conn()?;
         let query = format!(
             "MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[e:Edge {{edge_type: '{}'}}]->(b)",
             edge.from_id.replace("'", "\\'"),
@@ -93,58 +100,56 @@ impl Database {
             edge.edge_type.as_str()
         );
         
-        self.conn.query(&query)?;
+        conn.query(&query)?;
         Ok(())
     }
 
     pub fn count_nodes_by_type(&mut self, node_type: &NodeType) -> Result<usize> {
+        let conn = self.get_conn()?;
         let query = format!(
             "MATCH (n:Node {{node_type: '{}'}}) RETURN count(n) as count",
             node_type.as_str()
         );
         
-        let mut result = self.conn.query(&query)?;
-        if let Some(row) = result.next() {
-            let value = row.get(0).ok_or_else(|| anyhow::anyhow!("No value at index 0"))?;
-            let count = value.get_i64().ok_or_else(|| anyhow::anyhow!("Value is not i64"))?;
-            Ok(count as usize)
-        } else {
-            Ok(0)
+        for row in conn.query(&query)? {
+            if let Value::Int64(count) = &row[0] {
+                return Ok(*count as usize);
+            }
         }
+        Ok(0)
     }
 
     pub fn count_edges_by_type(&mut self, edge_type: &EdgeType) -> Result<usize> {
+        let conn = self.get_conn()?;
         let query = format!(
             "MATCH ()-[e:Edge {{edge_type: '{}'}}]->() RETURN count(e) as count",
             edge_type.as_str()
         );
         
-        let mut result = self.conn.query(&query)?;
-        if let Some(row) = result.next() {
-            let value = row.get(0).ok_or_else(|| anyhow::anyhow!("No value at index 0"))?;
-            let count = value.get_i64().ok_or_else(|| anyhow::anyhow!("Value is not i64"))?;
-            Ok(count as usize)
-        } else {
-            Ok(0)
+        for row in conn.query(&query)? {
+            if let Value::Int64(count) = &row[0] {
+                return Ok(*count as usize);
+            }
         }
+        Ok(0)
     }
 
     pub fn find_nodes_by_type(&mut self, node_type: &NodeType) -> Result<Vec<Node>> {
+        let conn = self.get_conn()?;
         let query = format!(
             "MATCH (n:Node {{node_type: '{}'}}) RETURN n.id, n.node_type, n.name, n.file, n.body, n.start_line, n.end_line",
             node_type.as_str()
         );
         
-        let mut result = self.conn.query(&query)?;
         let mut nodes = Vec::new();
         
-        while let Some(row) = result.next() {
-            let id = row.get(0).and_then(|v| v.get_str()).unwrap_or("").to_string();
-            let name = row.get(2).and_then(|v| v.get_str()).unwrap_or("").to_string();
-            let file = row.get(3).and_then(|v| v.get_str()).unwrap_or("").to_string();
-            let body = row.get(4).and_then(|v| v.get_str()).unwrap_or("").to_string();
-            let start_line = row.get(5).and_then(|v| v.get_i32()).unwrap_or(-1);
-            let end_line = row.get(6).and_then(|v| v.get_i32()).unwrap_or(-1);
+        for row in conn.query(&query)? {
+            let id = if let Value::String(s) = &row[0] { s.clone() } else { String::new() };
+            let name = if let Value::String(s) = &row[2] { s.clone() } else { String::new() };
+            let file = if let Value::String(s) = &row[3] { s.clone() } else { String::new() };
+            let body = if let Value::String(s) = &row[4] { s.clone() } else { String::new() };
+            let start_line = if let Value::Int32(i) = &row[5] { *i } else { -1 };
+            let end_line = if let Value::Int32(i) = &row[6] { *i } else { -1 };
             
             nodes.push(Node {
                 id,
@@ -163,7 +168,8 @@ impl Database {
 
     pub fn clear(&mut self) -> Result<()> {
         info!("Clearing all data from database");
-        self.conn.query("MATCH (n:Node) DETACH DELETE n")?;
+        let conn = self.get_conn()?;
+        conn.query("MATCH (n:Node) DETACH DELETE n")?;
         Ok(())
     }
 }
