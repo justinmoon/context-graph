@@ -3,6 +3,12 @@ use kuzu::{Connection, Database as KuzuDatabase, SystemConfig, Value};
 use std::path::Path;
 use tracing::{debug, info};
 
+/// Escape a string for use in Kuzu/Cypher queries
+/// In Cypher, single quotes are escaped by doubling them
+fn escape_kuzu_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "''")
+}
+
 pub struct Database {
     db: Box<KuzuDatabase>,
 }
@@ -78,11 +84,11 @@ impl Database {
         
         let query = format!(
             "CREATE (n:Node {{id: '{}', node_type: '{}', name: '{}', file: '{}', body: '{}', start_line: {}, end_line: {}}})",
-            node.id.replace("'", "\\'"),
+            escape_kuzu_string(&node.id),
             node.node_type.as_str(),
-            node.name.replace("'", "\\'"),
-            node.file.replace("'", "\\'"),
-            node.body.replace("'", "\\'").replace('\n', "\\n"),
+            escape_kuzu_string(&node.name),
+            escape_kuzu_string(&node.file),
+            escape_kuzu_string(&node.body),
             start_line,
             end_line
         );
@@ -95,8 +101,8 @@ impl Database {
         let conn = self.get_conn()?;
         let query = format!(
             "MATCH (a:Node {{id: '{}'}}), (b:Node {{id: '{}'}}) CREATE (a)-[e:Edge {{edge_type: '{}'}}]->(b)",
-            edge.from_id.replace("'", "\\'"),
-            edge.to_id.replace("'", "\\'"),
+            escape_kuzu_string(&edge.from_id),
+            escape_kuzu_string(&edge.to_id),
             edge.edge_type.as_str()
         );
         
@@ -179,14 +185,14 @@ impl Database {
         // Delete edges from this file's symbols
         let query = format!(
             "MATCH (f:Node {{id: '{}'}})-[:Edge]->(s:Node) DETACH DELETE s",
-            file_id.replace('\'', "\\'")
+            escape_kuzu_string(file_id)
         );
         conn.query(&query).ok();
         
         // Delete the file node itself
         let query = format!(
             "MATCH (f:Node {{id: '{}'}}) DETACH DELETE f",
-            file_id.replace('\'', "\\'")
+            escape_kuzu_string(file_id)
         );
         conn.query(&query).ok();
         
