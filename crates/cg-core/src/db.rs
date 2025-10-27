@@ -6,7 +6,11 @@ use tracing::{debug, info};
 /// Escape a string for use in Kuzu/Cypher queries
 /// In Cypher, single quotes are escaped by doubling them
 fn escape_kuzu_string(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\'', "''")
+    s.replace('\\', "\\\\")
+        .replace('\'', "''")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 pub struct Database {

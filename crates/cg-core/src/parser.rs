@@ -1,7 +1,7 @@
 use crate::model::{Edge, EdgeType, Node, NodeType};
 use crate::Result;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor, Node as TSNode};
 use tracing::debug;
 
 pub struct ParsedFile {
@@ -18,7 +18,6 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
         .ok_or_else(|| anyhow::anyhow!("Failed to parse file"))?;
 
     let mut nodes = Vec::new();
-    let edges = Vec::new();
 
     // Extract functions
     extract_functions(path, content, &tree, &mut nodes)?;
@@ -32,7 +31,14 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
     // Extract imports
     extract_imports(path, content, &tree, &mut nodes)?;
 
-    debug!("Parsed {}: {} nodes", path, nodes.len());
+    // Extract call edges between functions
+    let functions: Vec<Node> = nodes.iter()
+        .filter(|n| matches!(n.node_type, NodeType::Function))
+        .cloned()
+        .collect();
+    let edges = extract_calls(path, content, &tree, &functions)?;
+
+    debug!("Parsed {}: {} nodes, {} edges", path, nodes.len(), edges.len());
 
     Ok(ParsedFile { nodes, edges })
 }
@@ -193,14 +199,65 @@ fn extract_imports(path: &str, content: &str, tree: &tree_sitter::Tree, nodes: &
     if !import_statements.is_empty() {
         let node = Node::new(
             NodeType::Import,
-            "imports".to_string(),
+            format!("{} imports", import_statements.len()),
             path.to_string(),
-        ).with_body(import_statements.join("\n"));
+        );
+        // Note: We don't store full import bodies to avoid escaping complexity
+        // They can be extracted from the file on demand
         
         nodes.push(node);
     }
 
     Ok(())
+}
+
+fn extract_calls(
+    _path: &str,
+    content: &str,
+    tree: &tree_sitter::Tree,
+    functions: &[Node],
+) -> Result<Vec<Edge>> {
+    let query = Query::new(
+        &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        "(call_expression
+            function: (identifier) @callee)",
+    )?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+    let mut edges = Vec::new();
+
+    while let Some(match_) = matches.next() {
+        if let Some(callee_capture) = match_.captures.first() {
+            let callee_name = &content[callee_capture.node.byte_range()];
+            let call_line = callee_capture.node.start_position().row;
+            
+            // Find the containing function
+            if let Some(caller) = find_containing_function(call_line, functions) {
+                // Find the callee function
+                if let Some(callee) = functions.iter().find(|f| f.name == callee_name) {
+                    edges.push(Edge {
+                        from_id: caller.id.clone(),
+                        to_id: callee.id.clone(),
+                        edge_type: EdgeType::Calls,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(edges)
+}
+
+fn find_containing_function(line: usize, functions: &[Node]) -> Option<&Node> {
+    functions.iter().find(|f| {
+        if let (Some(start), Some(end)) = (f.start_line, f.end_line) {
+            line >= start as usize && line <= end as usize
+        } else {
+            false
+        }
+    })
 }
 
 #[cfg(test)]

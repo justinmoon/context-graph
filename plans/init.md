@@ -38,3 +38,24 @@
 - Store last commit hash in metadata
 - Use `git diff` to find changed files
 - Re-ingest only touched files
+
+## Legacy Test Porting Plan
+- **Source suites to mine** (from the original `~/code/stakgraph` repo):
+  - `ast/src/testing/typescript/mod.rs` (and `ast/src/testing/typescript/**`) – exports node/edge expectations for the TypeScript fixtures.
+  - `ast/src/testing/react/mod.rs` – React/JSX scenarios that map cleanly to our current parser.
+  - `standalone/tests/ts_tests.rs` and the TypeScript portions of `standalone/tests/fulltest.rs` – high-level assertions over node/edge counts.
+- **Harvest ground truth**
+  1. In the legacy repo, run the relevant tests (e.g., `cargo test -p ast testing::typescript`, `cargo test -p standalone ts_tests`) with temporary code that dumps node/edge snapshots to JSON (symbol names, counts, key relationships such as `createPerson` handlers).
+  2. Save those JSON artifacts into this repo under `fixtures/legacy_snapshots/`.
+- **Recreate fixtures**
+  - Copy only the TypeScript/React source trees into `fixtures/legacy/typescript` and `fixtures/legacy/react`, removing the old `Lang`/`Graph` harness so they are plain TS projects.
+  - Normalize paths (forward slashes) to make snapshot comparisons stable.
+- **Bridge tests in this repo**
+  - Add integration tests (e.g., `tests/legacy_port.rs`) that ingest each fixture via `cg_core::ingest`, then query the Kuzu DB for:
+    - Counts per `NodeType` (`Function`, `Class`, `Import`...), using the snapshots as expected values.
+    - Presence of notable symbols (`createPerson`, `UserInterface`, etc.) and their file paths.
+    - Edge counts (`Contains`, `Imports`, later `Calls`) as those features land.
+  - Assert equality with the stored JSON to guarantee parity.
+- **Iterate**
+  - Start with constructs our parser already extracts (functions/classes/imports). Regenerate snapshots and extend tests as we add calls, data models, endpoints, and incremental-ingest logic.
+  - Provide a helper script (`scripts/export_legacy_snapshots.sh`) to rerun the legacy export when fixtures change.
