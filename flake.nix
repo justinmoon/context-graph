@@ -58,6 +58,7 @@
               rustc
               rustfmt
               clippy
+              pkgs.stdenv.cc
             ])}:$PATH"
             
             exec ${./scripts/ci.sh}
