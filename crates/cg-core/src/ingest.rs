@@ -14,13 +14,6 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
     info!("  Database: {}", options.db_path);
     info!("  Project: {}", options.project_path);
     
-    if let Some(threads) = options.threads {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .ok();
-    }
-
     let mut db = Database::new(&options.db_path)?;
     
     if options.clean {
@@ -38,6 +31,8 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         project.root.display().to_string(),
         project.root.display().to_string(),
     );
+    // Delete and re-create repository node
+    db.delete_file_and_symbols(&repository_node.id)?;
     db.insert_node(&repository_node)?;
 
     let language_node = Node::new(
@@ -45,10 +40,12 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         "typescript".to_string(),
         project.root.display().to_string(),
     );
+    // Delete and re-create language node
+    db.delete_file_and_symbols(&language_node.id)?;
     db.insert_node(&language_node)?;
 
-    let parsed_files: Vec<_> = files
-        .par_iter()
+    let parse_files = || -> Vec<_> {
+        files.par_iter()
         .filter_map(|file_path| {
             let path_str = file_path.display().to_string();
             match project.read_file(file_path) {
@@ -67,7 +64,17 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
                 }
             }
         })
-        .collect();
+        .collect()
+    };
+
+    let parsed_files = if let Some(threads) = options.threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()?
+            .install(parse_files)
+    } else {
+        parse_files()
+    };
 
     let mut stats = IngestStats {
         files_processed: 0,
@@ -81,6 +88,9 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
             file_path.clone(),
             file_path.clone(),
         );
+        
+        // Delete existing file and its symbols before re-inserting
+        db.delete_file_and_symbols(&file_node.id)?;
         db.insert_node(&file_node)?;
 
         for node in &parsed.nodes {

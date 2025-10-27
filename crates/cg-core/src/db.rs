@@ -172,6 +172,26 @@ impl Database {
         conn.query("MATCH (n:Node) DETACH DELETE n")?;
         Ok(())
     }
+
+    pub fn delete_file_and_symbols(&mut self, file_id: &str) -> Result<()> {
+        let conn = self.get_conn()?;
+        
+        // Delete edges from this file's symbols
+        let query = format!(
+            "MATCH (f:Node {{id: '{}'}})-[:Edge]->(s:Node) DETACH DELETE s",
+            file_id.replace('\'', "\\'")
+        );
+        conn.query(&query).ok();
+        
+        // Delete the file node itself
+        let query = format!(
+            "MATCH (f:Node {{id: '{}'}}) DETACH DELETE f",
+            file_id.replace('\'', "\\'")
+        );
+        conn.query(&query).ok();
+        
+        Ok(())
+    }
 }
 
 #[cfg(test)]
