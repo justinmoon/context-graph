@@ -31,11 +31,11 @@
 - Constructor calls (new ClassName) not yet extracted
 - File-to-file Import edges not yet created
 
-### Phase 3: Testing & Validation
-10. Add CLI smoke tests with assert_cmd
-11. Port legacy stakgraph tests (see Legacy Test Porting Plan below)
-12. Create golden test files (input TS → expected JSON)
-13. Test on real-world repo (e.g., a medium-sized OSS project)
+### Phase 3: Testing & Validation (IN PROGRESS)
+10. ✅ Add CLI smoke tests with assert_cmd (12 tests passing)
+11. 🔄 Port legacy stakgraph tests (optional, see Legacy Test Porting Plan below)
+12. 🔄 Create golden test files (optional)
+13. 🔄 Test on real-world repo (optional)
 
 ## Architecture
 - **Crates**: `cg-core` (lib), `cg-cli` (binary)
@@ -47,25 +47,38 @@
 ## What We Can Do Now
 
 The current implementation can:
-- ✅ Ingest TypeScript/TSX projects
-- ✅ Extract: Functions, Classes, Interfaces, Imports (count)
-- ✅ Create edges: Contains (file→symbol), Calls (function→function)
-- ✅ Handle re-ingestion without crashes
-- ✅ Parse code with quotes/special characters safely
-- ✅ Parallel processing for speed
+- ✅ Ingest TypeScript/TSX projects with parallel processing
+- ✅ Extract: Functions, Classes, Interfaces, Imports
+- ✅ Create edges: Contains, Calls (within file), Implements/Extends
+- ✅ Handle re-ingestion safely with proper cleanup
+- ✅ Parse code with quotes/special characters (backslash escaping)
+- ✅ **Query with Cypher** (`cg query`)
+- ✅ **Find symbols by pattern** (`cg find symbol`)
+- ✅ **Find callers** (`cg find callers`)
+- ✅ **JSON output** for programmatic use
+- ✅ **12 CLI smoke tests** covering core workflows
 
 **Example:**
 ```bash
+# Ingest a project
 cg ingest --project ./my-ts-project --db ./graph.db --clean
-# Successfully ingests: 12 files → 37 symbols + 37 edges
+
+# Find symbols
+cg find symbol "Person" --db ./graph.db --limit 10
+
+# Execute raw queries
+cg query "MATCH (n:Node) WHERE n.node_type = 'Class' RETURN n.name" --db ./graph.db --json
+
+# Find who calls a function
+cg find callers "getUser" --db ./graph.db
 ```
 
-## What's Missing
+## What's Still Missing
 
-1. **Query interface** - Can ingest but can't search yet
-2. **More node types** - No variables, endpoints, requests, pages
-3. **More edge types** - No imports (file→file), no extends/implements
-4. **Better call graph** - Only simple function calls, no method calls
+1. **Cross-file call edges** - Calls only tracked within same file (needs second pass)
+2. **More node types** - DataModel, Var, Endpoint, Request, Page defined but not extracted
+3. **File-to-file Import edges** - Import statements counted but not linked
+4. **Constructor extraction** - `new ClassName()` not yet tracked
 5. **LSP integration** - Only syntax-level analysis (60-70% accuracy)
 
 ## Future: Incremental Ingestion (Phase 4)
