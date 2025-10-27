@@ -186,19 +186,20 @@ impl Database {
     pub fn delete_file_and_symbols(&mut self, file_id: &str) -> Result<()> {
         let conn = self.get_conn()?;
         
-        // Delete edges from this file's symbols
+        // Delete symbols contained by this file (via Contains edges only)
+        // This prevents accidentally deleting nodes connected via other edge types (Imports, Uses, etc.)
         let query = format!(
-            "MATCH (f:Node {{id: '{}'}})-[:Edge]->(s:Node) DETACH DELETE s",
+            "MATCH (f:Node {{id: '{}'}})-[e:Edge {{edge_type: 'Contains'}}]->(s:Node) DETACH DELETE s",
             escape_kuzu_string(file_id)
         );
-        conn.query(&query).ok();
+        conn.query(&query)?;
         
-        // Delete the file node itself
+        // Delete the file node itself and all its edges
         let query = format!(
             "MATCH (f:Node {{id: '{}'}}) DETACH DELETE f",
             escape_kuzu_string(file_id)
         );
-        conn.query(&query).ok();
+        conn.query(&query)?;
         
         Ok(())
     }
