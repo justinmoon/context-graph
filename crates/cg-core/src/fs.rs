@@ -9,8 +9,8 @@ pub struct Project {
 
 impl Project {
     pub fn discover(path: &str) -> Result<Self> {
-        let path = PathBuf::from(path);
-        let root = Self::find_git_root(&path).unwrap_or(path);
+        let path = std::fs::canonicalize(path)?;
+        let root = Self::find_git_root(&path).unwrap_or_else(|| path.clone());
         info!("Project root: {}", root.display());
         Ok(Self { root })
     }

@@ -97,13 +97,25 @@ fn main() -> Result<()> {
             threads,
             clean,
         } => {
-            tracing::info!("Starting ingestion");
-            tracing::info!("Database: {}", db);
-            tracing::info!("Project: {}", project);
-            tracing::info!("Threads: {:?}", threads);
-            tracing::info!("Clean: {}", clean);
-            // TODO: Implement ingestion
-            println!("Ingest command not yet implemented");
+            let options = cg_core::ingest::IngestOptions {
+                db_path: db,
+                project_path: project,
+                threads,
+                clean,
+            };
+            
+            match cg_core::ingest::ingest(options) {
+                Ok(stats) => {
+                    println!("✓ Ingestion complete!");
+                    println!("  Files processed: {}", stats.files_processed);
+                    println!("  Symbols created: {}", stats.symbols_created);
+                    println!("  Edges created: {}", stats.edges_created);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Query { query, db, json } => {
             tracing::info!("Executing query");
