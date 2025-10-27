@@ -6,7 +6,7 @@ on:
 jobs:
   checks:
     # Use self-hosted runner for justinmoon, GitHub-hosted for others
-    runs-on: ${{ github.actor == 'justinmoon' && '[self-hosted, nixos, hetzner]' || 'ubuntu-latest' }}
+    runs-on: ${{ github.actor == 'justinmoon' && fromJSON('["self-hosted", "nixos", "hetzner"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
