@@ -1,0 +1,22 @@
+# Rust
+/target
+Cargo.lock
+*.pdb
+
+# Nix
+result
+result-*
+.direnv
+.envrc.cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+*.profraw
+*.profdata

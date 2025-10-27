@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: [self-hosted, nixos, hetzner]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        if: runner.environment != 'self-hosted'
+        uses: DeterminateSystems/nix-installer-action@v12
+
+      - name: Configure cache
+        if: runner.environment != 'self-hosted'
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: Run CI
+        run: nix run .#ci
