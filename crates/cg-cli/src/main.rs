@@ -118,26 +118,69 @@ fn main() -> Result<()> {
             }
         }
         Commands::Query { query, db, json } => {
-            tracing::info!("Executing query");
-            tracing::info!("Database: {}", db);
-            tracing::info!("JSON output: {}", json);
-            // TODO: Implement query execution
-            println!("Query: {}", query);
-            println!("Query command not yet implemented");
+            match cg_core::query::execute_query(&db, &query) {
+                Ok(results) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&results)?);
+                    } else {
+                        println!("Results: {} rows", results.len());
+                        for (i, row) in results.iter().enumerate() {
+                            println!("Row {}: {}", i, row);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error executing query: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Find { command } => match command {
             FindCommands::Symbol { pattern, db, limit } => {
-                tracing::info!("Finding symbols matching: {}", pattern);
-                tracing::info!("Database: {}", db);
-                tracing::info!("Limit: {:?}", limit);
-                // TODO: Implement symbol search
-                println!("Find symbol command not yet implemented");
+                match cg_core::query::find_symbol(&db, &pattern, limit) {
+                    Ok(nodes) => {
+                        if nodes.is_empty() {
+                            println!("No symbols found matching: {}", pattern);
+                        } else {
+                            println!("Found {} symbol(s) matching '{}':\n", nodes.len(), pattern);
+                            for node in nodes {
+                                println!("  {} ({})", node.name, node.node_type.as_str());
+                                println!("    File: {}", node.file);
+                                if let (Some(start), Some(end)) = (node.start_line, node.end_line) {
+                                    println!("    Lines: {}-{}", start, end);
+                                }
+                                println!();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error finding symbols: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             FindCommands::Callers { symbol, db } => {
-                tracing::info!("Finding callers of: {}", symbol);
-                tracing::info!("Database: {}", db);
-                // TODO: Implement caller search
-                println!("Find callers command not yet implemented");
+                match cg_core::query::find_callers(&db, &symbol) {
+                    Ok(callers) => {
+                        if callers.is_empty() {
+                            println!("No callers found for: {}", symbol);
+                        } else {
+                            println!("Found {} caller(s) of '{}':\n", callers.len(), symbol);
+                            for (caller, callee_name) in callers {
+                                println!("  {} calls {}", caller.name, callee_name);
+                                println!("    File: {}", caller.file);
+                                if let (Some(start), Some(end)) = (caller.start_line, caller.end_line) {
+                                    println!("    Lines: {}-{}", start, end);
+                                }
+                                println!();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error finding callers: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
         },
     }

@@ -39,6 +39,10 @@ impl Database {
         Ok(Connection::new(&self.db)?)
     }
 
+    pub fn get_connection(&self) -> Result<Connection<'_>> {
+        self.get_conn()
+    }
+
     pub fn initialize_schema(&mut self) -> Result<()> {
         info!("Initializing database schema");
         

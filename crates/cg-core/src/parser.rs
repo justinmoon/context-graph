@@ -1,7 +1,7 @@
 use crate::model::{Edge, EdgeType, Node, NodeType};
 use crate::Result;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Parser, Query, QueryCursor, Node as TSNode};
+use tree_sitter::{Parser, Query, QueryCursor};
 use tracing::debug;
 
 pub struct ParsedFile {
@@ -31,12 +31,19 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
     // Extract imports
     extract_imports(path, content, &tree, &mut nodes)?;
 
-    // Extract call edges between functions
+    // Extract call edges between functions (within this file)
     let functions: Vec<Node> = nodes.iter()
         .filter(|n| matches!(n.node_type, NodeType::Function))
         .cloned()
         .collect();
-    let edges = extract_calls(path, content, &tree, &functions)?;
+    let mut edges = extract_calls(path, content, &tree, &functions)?;
+
+    // Extract extends and implements edges for classes and interfaces
+    let classes_and_interfaces: Vec<Node> = nodes.iter()
+        .filter(|n| matches!(n.node_type, NodeType::Class | NodeType::Interface))
+        .cloned()
+        .collect();
+    edges.extend(extract_extends_implements(path, content, &tree, &classes_and_interfaces)?);
 
     debug!("Parsed {}: {} nodes, {} edges", path, nodes.len(), edges.len());
 
@@ -217,10 +224,19 @@ fn extract_calls(
     tree: &tree_sitter::Tree,
     functions: &[Node],
 ) -> Result<Vec<Edge>> {
+    // Query for both simple identifier calls and member expression calls
     let query = Query::new(
         &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        "(call_expression
-            function: (identifier) @callee)",
+        r#"
+        ; Simple identifier calls: foo()
+        (call_expression
+            function: (identifier) @callee)
+        
+        ; Member expression calls: obj.method(), console.log()
+        (call_expression
+            function: (member_expression
+                property: (property_identifier) @method_name))
+        "#,
     )?;
 
     let mut cursor = QueryCursor::new();
@@ -229,14 +245,25 @@ fn extract_calls(
     let mut edges = Vec::new();
 
     while let Some(match_) = matches.next() {
-        if let Some(callee_capture) = match_.captures.first() {
-            let callee_name = &content[callee_capture.node.byte_range()];
-            let call_line = callee_capture.node.start_position().row;
+        // Try to find the callee capture (for simple identifier calls)
+        let callee_name_opt = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "callee")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        // Try to find the method_name capture (for member expression calls)
+        let method_name_opt = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "method_name")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        let callee_name = callee_name_opt.or(method_name_opt);
+        
+        if let Some(name) = callee_name {
+            let call_line = match_.captures.first().unwrap().node.start_position().row;
             
             // Find the containing function
             if let Some(caller) = find_containing_function(call_line, functions) {
-                // Find the callee function
-                if let Some(callee) = functions.iter().find(|f| f.name == callee_name) {
+                // Find the callee function by name
+                if let Some(callee) = functions.iter().find(|f| f.name == name) {
                     edges.push(Edge {
                         from_id: caller.id.clone(),
                         to_id: callee.id.clone(),
@@ -258,6 +285,111 @@ fn find_containing_function(line: usize, functions: &[Node]) -> Option<&Node> {
             false
         }
     })
+}
+
+fn extract_extends_implements(
+    _path: &str,
+    content: &str,
+    tree: &tree_sitter::Tree,
+    classes_and_interfaces: &[Node],
+) -> Result<Vec<Edge>> {
+    // Query for class extends and implements clauses
+    let query = Query::new(
+        &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        r#"
+        ; Class extends
+        (class_declaration
+            name: (type_identifier) @class_name
+            (class_heritage
+                (extends_clause
+                    value: (identifier) @extends_target)))
+        
+        ; Class implements
+        (class_declaration
+            name: (type_identifier) @class_name_impl
+            (class_heritage
+                (implements_clause
+                    (type_identifier) @implements_target)))
+        
+        ; Interface extends
+        (interface_declaration
+            name: (type_identifier) @interface_name
+            (extends_type_clause
+                (type_identifier) @interface_extends_target))
+        "#,
+    )?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+    let mut edges = Vec::new();
+
+    while let Some(match_) = matches.next() {
+        // Try to find class extends
+        let class_name = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "class_name")
+            .map(|c| &content[c.node.byte_range()]);
+        let extends_target = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "extends_target")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        if let (Some(class), Some(target)) = (class_name, extends_target) {
+            if let (Some(from_node), Some(to_node)) = (
+                classes_and_interfaces.iter().find(|n| n.name == class),
+                classes_and_interfaces.iter().find(|n| n.name == target)
+            ) {
+                edges.push(Edge {
+                    from_id: from_node.id.clone(),
+                    to_id: to_node.id.clone(),
+                    edge_type: EdgeType::Implements, // Using Implements for extends as well
+                });
+            }
+        }
+
+        // Try to find class implements
+        let class_name_impl = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "class_name_impl")
+            .map(|c| &content[c.node.byte_range()]);
+        let implements_target = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "implements_target")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        if let (Some(class), Some(target)) = (class_name_impl, implements_target) {
+            if let (Some(from_node), Some(to_node)) = (
+                classes_and_interfaces.iter().find(|n| n.name == class),
+                classes_and_interfaces.iter().find(|n| n.name == target)
+            ) {
+                edges.push(Edge {
+                    from_id: from_node.id.clone(),
+                    to_id: to_node.id.clone(),
+                    edge_type: EdgeType::Implements,
+                });
+            }
+        }
+
+        // Try to find interface extends
+        let interface_name = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "interface_name")
+            .map(|c| &content[c.node.byte_range()]);
+        let interface_extends = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "interface_extends_target")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        if let (Some(interface), Some(target)) = (interface_name, interface_extends) {
+            if let (Some(from_node), Some(to_node)) = (
+                classes_and_interfaces.iter().find(|n| n.name == interface),
+                classes_and_interfaces.iter().find(|n| n.name == target)
+            ) {
+                edges.push(Edge {
+                    from_id: from_node.id.clone(),
+                    to_id: to_node.id.clone(),
+                    edge_type: EdgeType::Implements, // Using Implements for interface extends
+                });
+            }
+        }
+    }
+
+    Ok(edges)
 }
 
 #[cfg(test)]
