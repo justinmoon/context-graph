@@ -191,10 +191,83 @@ A Rust CLI (`stakgraph`) that can:
 
 ---
 
-## Immediate Next Actions
-1. Set up the new Cargo workspace with CLI + core crates.
-2. Implement Kuzu connection + schema bootstrap.
-3. Build the TypeScript parser module and basic ingestion loop.
-4. Wire up CLI commands and validate on fixture repo.
-5. Iterate towards incremental ingestion (Step 2) once Step 1 is stable.
+## Testing Strategy - Path to Feature Parity
+
+We will replicate the original stakgraph's test suite to validate our implementation and ensure feature parity. This gives us clear success criteria and validates our parser extracts equivalent information.
+
+### Phase 1: Replicate Inline TypeScript/React Fixtures
+**Goal:** Match extraction logic for basic TypeScript and React patterns.
+
+1. **Copy fixtures from original stakgraph**
+   - Source: `~/code/stakgraph/ast/src/testing/typescript/` 
+   - Source: `~/code/stakgraph/ast/src/testing/react/`
+   - Destination: `fixtures/typescript/` and `fixtures/react/` in our repo
+   
+2. **Analyze their test assertions**
+   - Study what NodeTypes they extract (File, Function, Class, Interface, DataModel, Import, Var, etc.)
+   - Study what EdgeTypes they create (Contains, Calls, Imports, Renders, Handler, Of, Operand)
+   - Document the expected graph structure
+   
+3. **Implement parser to match their extraction**
+   - Start with basic nodes: File, Function, Class, Interface
+   - Add relationship detection: Contains, Calls, Imports
+   - Iterate to add more node types and edge types
+   
+4. **Write integration tests**
+   - Test TypeScript fixture ingestion
+   - Test React fixture ingestion
+   - Assert on node counts, types, and relationships
+   - Validate against their expected outputs
+
+### Phase 2: Full demorepo Replication
+**Goal:** Pass the comprehensive fulltest.rs validation.
+
+5. **Use fayekelmith/demorepo as fixture**
+   - Clone `https://github.com/fayekelmith/demorepo.git` at commit `778b5202fca04a2cd5daed377c0063e9af52b24c`
+   - This is a Go backend + React frontend full-stack app
+   
+6. **Replicate fulltest.rs assertions**
+   - Port their comprehensive test from `~/code/stakgraph/standalone/tests/fulltest.rs`
+   - Validate ~140+ nodes across multiple types
+   - Validate edge relationships (function calls, endpoint handlers, page renders, request-to-endpoint links)
+   - Expected: 2 languages, 22 files, 23 libraries, 10 imports, 3 endpoints, 2 requests, 2 pages, etc.
+   
+7. **Focus on TypeScript/React subset first**
+   - Start by validating just the React frontend portion
+   - Then add Go backend validation once we add Go support
+   - Ensures we can pass their TypeScript tests before expanding to other languages
+
+### Phase 3: Multi-Repo and Advanced Features  
+**Goal:** Support real-world production repos and advanced scenarios.
+
+8. **Multi-repo ingestion**
+   - Test on sphinx-tribes (Go) + sphinx-tribes-frontend (React)
+   - Validate cross-repo request-to-endpoint linking
+   
+9. **Incremental ingestion (Step 2)**
+   - Replicate their graph_accuracy.rs test
+   - Validate updates between commits
+   - Test add/modify/delete/rename scenarios
+   
+10. **LSP integration** (optional, later)
+    - Add language server protocol support for better cross-file linking
+    - Validate with `USE_LSP=1` test variants
+
+### Success Metrics
+- ✅ Pass all TypeScript fixture tests
+- ✅ Pass all React fixture tests  
+- ✅ Pass fulltest.rs validation on demorepo (React portion)
+- ✅ Match node counts and edge counts from original stakgraph
+- ✅ Validate specific relationships (e.g., "POST request calls POST /person endpoint")
+
+### Immediate Next Actions (Updated)
+1. ✅ Set up the new Cargo workspace with CLI + core crates (DONE)
+2. Copy TypeScript and React fixtures from original stakgraph
+3. Study and document their expected node/edge extractions
+4. Implement Kuzu connection + schema bootstrap
+5. Build the TypeScript parser module to match their extraction logic
+6. Write integration tests validating against their fixtures
+7. Iterate until we pass all Phase 1 tests
+8. Move to Phase 2 (demorepo) once Phase 1 passes
+9. Implement incremental ingestion (Step 2) once basic ingestion is solid
 

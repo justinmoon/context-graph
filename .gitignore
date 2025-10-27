@@ -20,3 +20,4 @@ result-*
 # Testing
 *.profraw
 *.profdata
+.helix/

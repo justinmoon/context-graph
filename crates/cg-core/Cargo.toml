@@ -1,0 +1,22 @@
+[package]
+name = "cg-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "cg_core"
+path = "src/lib.rs"
+
+[dependencies]
+kuzu.workspace = true
+tree-sitter.workspace = true
+tree-sitter-typescript.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+blake3.workspace = true
+ignore.workspace = true
