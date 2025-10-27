@@ -1,3 +1,4 @@
+/// Main entry point for the context-graph application
 fn main() {
     println!("Hello, world!");
 }
