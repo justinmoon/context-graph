@@ -26,9 +26,13 @@ pub fn find_symbol(db_path: &str, pattern: &str, limit: Option<usize>) -> Result
     let limit_clause = limit.map(|l| format!(" LIMIT {}", l)).unwrap_or_default();
     
     // Use regex for case-insensitive pattern matching
+    // First escape regex special chars, then escape for Kuzu string literals
+    let mut escaped = regex::escape(pattern);
+    escaped = escaped.replace('\\', "\\\\").replace('\'', "\\'");
+    
     let query = format!(
         "MATCH (n:Node) WHERE n.name =~ '(?i).*{}.*' RETURN n.id, n.node_type, n.name, n.file, n.body, n.start_line, n.end_line ORDER BY n.name{}",
-        regex::escape(pattern),
+        escaped,
         limit_clause
     );
     
@@ -48,13 +52,16 @@ pub fn find_callers(db_path: &str, symbol: &str) -> Result<Vec<(Node, String)>> 
     
     // Find all nodes that call the given symbol
     // Match nodes either by name or by ID
+    // Escape single quotes for Kuzu string literals
+    let escaped_symbol = symbol.replace('\\', "\\\\").replace('\'', "\\'");
+    
     let query = format!(
         "MATCH (caller:Node)-[e:Edge {{edge_type: 'Calls'}}]->(callee:Node) \
          WHERE callee.name = '{}' OR callee.id = '{}' \
          RETURN caller.id, caller.node_type, caller.name, caller.file, caller.body, caller.start_line, caller.end_line, callee.name \
          ORDER BY caller.name",
-        symbol.replace('\'', "''"),
-        symbol.replace('\'', "''")
+        escaped_symbol,
+        escaped_symbol
     );
     
     let conn = db.get_connection()?;
