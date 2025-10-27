@@ -20,3 +20,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 ignore.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

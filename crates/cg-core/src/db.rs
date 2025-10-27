@@ -173,3 +173,76 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_database_init() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("test.db");
+        let _db = Database::new(db_path.to_str().unwrap())?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_and_query_node() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("test.db");
+        let mut db = Database::new(db_path.to_str().unwrap())?;
+
+        let node = Node::new(
+            NodeType::Function,
+            "testFunction".to_string(),
+            "test.ts".to_string(),
+        ).with_body("function testFunction() {}".to_string())
+         .with_lines(1, 3);
+
+        db.insert_node(&node)?;
+
+        let count = db.count_nodes_by_type(&NodeType::Function)?;
+        assert_eq!(count, 1);
+
+        let nodes = db.find_nodes_by_type(&NodeType::Function)?;
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "testFunction");
+        assert_eq!(nodes[0].file, "test.ts");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_and_query_edge() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("test.db");
+        let mut db = Database::new(db_path.to_str().unwrap())?;
+
+        let node1 = Node::new(
+            NodeType::Function,
+            "caller".to_string(),
+            "test.ts".to_string(),
+        );
+        let node2 = Node::new(
+            NodeType::Function,
+            "callee".to_string(),
+            "test.ts".to_string(),
+        );
+
+        db.insert_node(&node1)?;
+        db.insert_node(&node2)?;
+
+        let edge = Edge {
+            from_id: node1.id.clone(),
+            to_id: node2.id.clone(),
+            edge_type: EdgeType::Calls,
+        };
+        db.insert_edge(&edge)?;
+
+        let count = db.count_edges_by_type(&EdgeType::Calls)?;
+        assert_eq!(count, 1);
+
+        Ok(())
+    }
+}
