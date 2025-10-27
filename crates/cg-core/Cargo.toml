@@ -13,6 +13,7 @@ path = "src/lib.rs"
 kuzu.workspace = true
 tree-sitter.workspace = true
 tree-sitter-typescript.workspace = true
+streaming-iterator.workspace = true
 rayon.workspace = true
 tracing.workspace = true
 serde.workspace = true
