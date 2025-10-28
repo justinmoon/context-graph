@@ -4,10 +4,16 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 use tracing::debug;
 
+pub struct ImportInfo {
+    pub symbol: String,      // Imported symbol name
+    pub from_file: String,   // Source file path
+}
+
 pub struct ParsedFile {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub import_edges: Vec<(String, String)>, // (from_file, to_file) pairs
+    pub imports: Vec<ImportInfo>, // Imported symbols with their source files
 }
 
 pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
@@ -53,12 +59,14 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
         .collect();
     edges.extend(extract_extends_implements(path, content, &tree, &classes_and_interfaces)?);
 
-    // Extract file-to-file import edges
+    // Extract file-to-file import edges and symbol imports
     let import_edges = extract_import_edges(path, content, &tree)?;
+    let imports = extract_import_symbols(path, content, &tree)?;
 
-    debug!("Parsed {}: {} nodes, {} edges, {} import edges", path, nodes.len(), edges.len(), import_edges.len());
+    debug!("Parsed {}: {} nodes, {} edges, {} import edges, {} imports", 
+           path, nodes.len(), edges.len(), import_edges.len(), imports.len());
 
-    Ok(ParsedFile { nodes, edges, import_edges })
+    Ok(ParsedFile { nodes, edges, import_edges, imports })
 }
 
 fn extract_functions(path: &str, content: &str, tree: &tree_sitter::Tree, nodes: &mut Vec<Node>) -> Result<()> {
@@ -291,6 +299,51 @@ fn resolve_import_path(from_file: &str, import_path: &str) -> Result<Option<Stri
     }
     
     Ok(None)
+}
+
+fn extract_import_symbols(
+    path: &str,
+    content: &str,
+    tree: &tree_sitter::Tree,
+) -> Result<Vec<ImportInfo>> {
+    // Extract named imports: import { foo, bar } from './module'
+    let query = Query::new(
+        &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        r#"
+        (import_statement
+            (import_clause
+                (named_imports
+                    (import_specifier
+                        name: (identifier) @import_name)))
+            source: (string
+                (string_fragment) @source_path))
+        "#,
+    )?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+    let mut imports = Vec::new();
+    while let Some(match_) = matches.next() {
+        let import_name = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "import_name")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        let source_path = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "source_path")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        if let (Some(name), Some(source)) = (import_name, source_path) {
+            if let Ok(Some(resolved_path)) = resolve_import_path(path, source) {
+                imports.push(ImportInfo {
+                    symbol: name.to_string(),
+                    from_file: resolved_path,
+                });
+            }
+        }
+    }
+
+    Ok(imports)
 }
 
 fn extract_calls(

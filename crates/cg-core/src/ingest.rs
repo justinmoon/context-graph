@@ -102,12 +102,36 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
     // Track if any errors occurred during ingestion
     let mut had_errors = false;
 
-    // Collect all import edges for processing after files are inserted
+    // Collect all import edges and symbol maps for processing after files are inserted
     let mut all_import_edges: Vec<(String, String)> = Vec::new();
+    
+    // Build symbol map: (symbol_name, file_path) -> Node
+    let mut symbol_map: std::collections::HashMap<(String, String), Node> = std::collections::HashMap::new();
+    
+    // Build import map: (file_path, symbol_name) -> source_file_path
+    let mut import_map: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
 
-    for (file_path, parsed) in parsed_files {
+    for (file_path, parsed) in &parsed_files {
         // Collect import edges from this file
         all_import_edges.extend(parsed.import_edges.clone());
+        
+        // Build symbol map (functions and classes in this file)
+        for node in &parsed.nodes {
+            if matches!(node.node_type, NodeType::Function | NodeType::Class) {
+                symbol_map.insert((node.name.clone(), file_path.clone()), node.clone());
+            }
+        }
+        
+        // Build import map (what symbols this file imports from where)
+        for import_info in &parsed.imports {
+            import_map.insert(
+                (file_path.clone(), import_info.symbol.clone()),
+                import_info.from_file.clone()
+            );
+        }
+    }
+
+    for (file_path, parsed) in parsed_files {
         let file_node = Node::new(
             NodeType::File,
             file_path.clone(),
@@ -174,6 +198,16 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         if let Err(e) = db.insert_edge(&import_edge) {
             debug!("Failed to insert import edge {} -> {}: {}", from_file, to_file, e);
             // Don't fail the whole ingestion for import edges
+        } else {
+            stats.edges_created += 1;
+        }
+    }
+    
+    // Create cross-file call edges using import resolution
+    let cross_file_edges = resolve_cross_file_calls(&symbol_map, &import_map);
+    for edge in cross_file_edges {
+        if let Err(e) = db.insert_edge(&edge) {
+            debug!("Failed to insert cross-file call edge: {}", e);
         } else {
             stats.edges_created += 1;
         }
@@ -313,6 +347,29 @@ fn get_incremental_changes(
         files_to_process,
         files_to_delete,
     }))
+}
+
+fn resolve_cross_file_calls(
+    _symbol_map: &std::collections::HashMap<(String, String), Node>,
+    _import_map: &std::collections::HashMap<(String, String), String>,
+) -> Vec<Edge> {
+    // TODO: Cross-file call resolution
+    // 
+    // Current limitation: extract_calls() only creates edges for calls to functions
+    // within the same file. Cross-file calls (e.g., calling an imported function)
+    // are not yet resolved.
+    //
+    // To implement this properly, we need to:
+    // 1. Store unresolved calls in ParsedFile (call sites that don't match local functions)
+    // 2. After building symbol_map and import_map, resolve these calls:
+    //    - For each unresolved call to symbol X in file F:
+    //      a. Check if X is imported in F (use import_map)
+    //      b. If yes, get source file and look up X in symbol_map
+    //      c. Create Calls edge from caller to the imported function
+    //
+    // This requires refactoring extract_calls() to return both resolved and unresolved calls.
+    
+    Vec::new()
 }
 
 pub struct IngestStats {
