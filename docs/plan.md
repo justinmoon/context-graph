@@ -1,135 +1,60 @@
-# Context Graph - Rust/Kuzu Implementation Plan
+# Context Graph Testing Plan
 
-## Current Status
-✅ Basic workspace, DB layer, parser (functions/classes/interfaces/imports), ingestion pipeline, CLI
-✅ **All critical bugs FIXED** - Production-ready for basic use
-✅ **Phase 2 COMPLETE** - Query/find commands, improved parser with method calls and Implements edges
-✅ **Phase 3 COMPLETE** - Comprehensive test suite: 12 CLI tests, 4 legacy parity tests, real-world smoke test
-✅ **Phase 4 COMPLETE** - Incremental ingestion: 100x+ faster re-ingestion via git diff (instant when no changes)
+## Goals
+- Guarantee the TypeScript ingestion pipeline (parsing, graph construction, incremental updates) behaves deterministically across real projects.
+- Catch regressions quickly with layered automated suites.
+- Prove incremental ingestion matches a clean rebuild when branches/commits change.
 
-## Critical Bugs (FIXED ✅)
-1. ✅ **SQL Injection Risk** - Implemented proper Cypher escaping (`escape_kuzu_string()`)
-2. ✅ **No Re-ingest** - Added `delete_file_and_symbols()` for safe upsert
-3. ✅ **ThreadPool Panic** - Fixed: use local pool with `install()` or default pool
-4. ✅ **Calls Edges** - Parser now extracts function call relationships
+## Test Suites (Current & Maintained)
+- **Unit tests (`cg-core`)** – parser extraction, database helpers, incremental git utilities.
+- **Graph feature tests** – constructor call edges, file-to-file import edges, incremental preservation of dependencies.
+- **CLI smoke tests (`cg-cli`)** – covers ingest/query/find workflows, error handling, special characters, JSON output.
+- **Legacy parity tests** – ingest the legacy fixtures, compare node/edge counts and notable symbols against JSON snapshots.
+- **Incremental unit tests** – git-backed temp repos validating commit storage, modified-file reprocessing, fallback on invalid commits.
+- **Real-world smoke test (`scripts/test_real_repo.sh`)** – ingests this repository, reports metrics, validates query output.
 
-## Immediate Roadmap
+## Remaining Risk Areas
+- Cross-file call resolution (infrastructure ready, edges not emitted yet).
+- LSP-driven node types (DataModel, Var, Endpoint, etc.) – planned future work.
+- Large-history incremental correctness beyond unit coverage.
 
-### Phase 1: Fix Critical Bugs ✅ COMPLETE
-1. ✅ Fix ThreadPoolBuilder (use default pool or lazy_static)
-2. ✅ Add upsert/MERGE logic or delete-before-insert
-3. ✅ Fix SQL escaping (proper Kuzu escaping or parameters)
-4. ✅ Extract Calls edges in parser
+## Incremental Ingestion Validation Harness
+A heavier-weight regression framework to compare incremental vs full ingest on real histories.
 
-### Phase 2: Core Features ✅ COMPLETE
-5. ✅ Implement query/find CLI commands (`cg query`, `cg find symbol`, `cg find callers`)
-6. ✅ Node types already defined: DataModel, Var, Endpoint, Request, Page (parser TBD)
-7. ✅ Extract Implements and Extends edges (class/interface relationships)
-8. ✅ Improve call graph: method calls (console.log, obj.method)
-9. ✅ Remove legacy fixture mod.rs files
+1. **Repository selection**
+   - Curate several sizeable TypeScript repos (e.g., microsoft/TypeScript, vercel/next.js).
+   - For each, define commit sequences: straight-line history, branch switch (A→B→A), renames, deletions, merges, rebases/force pushes.
 
-**Known Limitations (documented in tests):**
-- Call edges only work within same file (cross-file calls need second pass)
-- Constructor calls (new ClassName) not yet extracted
-- File-to-file Import edges not yet created
-- ~45% feature parity with legacy stakgraph (tree-sitter only, no LSP)
+2. **Dual-track ingest per commit**
+   - **Full baseline**: checkout commit `C`, ingest with `cg ingest --clean`, export canonical snapshots (`nodes.json`, `edges.json`).
+   - **Incremental candidate**: reuse persistent DB, run `cg ingest --incremental`, export the same snapshots.
+   - Store snapshots in per-commit directories for diffing.
 
-### Phase 3: Testing & Validation ✅ COMPLETE
-10. ✅ Add CLI smoke tests with assert_cmd (12 tests passing)
-11. ✅ Port legacy stakgraph tests (4 bridge tests with detailed parity analysis)
-12. 🔄 Create golden test files (optional - can be done incrementally)
-13. ✅ Test on real-world repo (smoke test script validates on actual projects)
+3. **Snapshot format**
+   - `cg query "MATCH (n:Node) RETURN n.id, n.node_type, n.name, n.file ORDER BY n.id" --json` → `nodes.json`.
+   - `cg query "MATCH (a)-[e:Edge]->(b) RETURN a.id, e.edge_type, b.id ORDER BY a.id, e.edge_type, b.id" --json` → `edges.json`.
+   - Post-process with `jq --sort-keys` to ensure deterministic diffs.
 
-## Architecture
-- **Crates**: `cg-core` (lib), `cg-cli` (binary)
-- **Parsing**: tree-sitter-typescript → extract nodes/edges (see docs/treesitter.md)
-- **Storage**: Embedded Kuzu (Node table + Edge table)
-- **Concurrency**: Parallel parse with rayon, single-threaded DB writes
-- **Future**: Optional LSP integration for better accuracy (see docs/lsp.md)
+4. **Diff & metrics**
+   - Compare baseline vs incremental snapshots. Any difference fails the run and logs the offending commit.
+   - Collect metrics (files processed, ingest duration, files/sec, symbols/file, edges/symbol) to monitor performance.
 
-## What We Can Do Now
+5. **Automation**
+   - Implement a driver script (Rust or Python). Inputs: repo URL, list of commits/branches, temp workspace.
+   - Flow: clone → iterate commits → run full/incremental ingests → diff → record stats.
+   - On failure, preserve artifacts for manual inspection.
 
-The current implementation can:
-- ✅ Ingest TypeScript/TSX projects with parallel processing
-- ✅ Extract: Functions, Classes, Interfaces, Imports
-- ✅ Create edges: Contains, Calls (within file), Implements/Extends
-- ✅ Handle re-ingestion safely with proper cleanup
-- ✅ Parse code with quotes/special characters (backslash escaping)
-- ✅ **Query with Cypher** (`cg query`)
-- ✅ **Find symbols by pattern** (`cg find symbol`)
-- ✅ **Find callers** (`cg find callers`)
-- ✅ **JSON output** for programmatic use
-- ✅ **12 CLI smoke tests** covering core workflows
+6. **CI integration**
+   - Add a trimmed commit set to CI (e.g., 3 commits per repo) for quick regression detection.
+   - Keep full suite as an optional nightly/weekly job.
 
-**Example:**
-```bash
-# Ingest a project
-cg ingest --project ./my-ts-project --db ./graph.db --clean
+## Additional Testing Enhancements
+- Generate “golden” JSON outputs for the TypeScript fixtures and assert exact datasets (beyond counts).
+- Extend graph feature tests as new node/edge types are implemented (DataModel, Endpoint, etc.).
+- Consider property-based tests for parser extractors (randomized AST snippets).
+- Monitor `scripts/test_real_repo.sh` outputs in CI and alert on regressions (e.g., ingestion > threshold).
 
-# Find symbols
-cg find symbol "Person" --db ./graph.db --limit 10
-
-# Execute raw queries
-cg query "MATCH (n:Node) WHERE n.node_type = 'Class' RETURN n.name" --db ./graph.db --json
-
-# Find who calls a function
-cg find callers "getUser" --db ./graph.db
-```
-
-## Recent Improvements (Oct 2025)
-
-### ✅ Constructor Call Extraction
-- Detects `new ClassName()` expressions
-- Creates Calls edges from functions to classes
-- Handles both simple and nested constructors
-
-### ✅ File-to-File Import Edges
-- Creates Import edges between File nodes
-- Resolves relative import paths (./utils, ../lib/helper)
-- Tries multiple extensions (.ts, .tsx, /index.ts)
-- Enables dependency graphs and impact analysis
-
-### ✅ Import Symbol Tracking
-- Tracks which symbols are imported from which files
-- Infrastructure ready for cross-file call resolution
-- Symbol and import maps built during ingestion
-
-## What's Still Missing
-
-1. **Cross-file call resolution** - Infrastructure in place, resolution TODO
-   - Import symbols tracked but not yet used to resolve calls
-   - Example: `helper()` calling imported `helper` from another file
-   - Requires: Track unresolved calls in extract_calls()
-2. **More node types** - DataModel, Var, Endpoint, Request, Page defined but not extracted
-3. **LSP integration** - Only syntax-level analysis (60-70% accuracy)
-
-### Phase 4: Incremental Ingestion ✅ COMPLETE
-- ✅ Store last commit hash in metadata
-- ✅ Use `git diff --name-status` to detect file changes/deletions/renames
-- ✅ Re-ingest only touched files
-- ✅ Delete removed/renamed files from database
-- ✅ Graceful fallback on unreachable commits (rebase, force push)
-- ✅ Only update metadata on successful ingestion
-- ✅ 6 automated tests (4 passing, 2 ignored on macOS)
-- ✅ 100x+ faster for small changes (instant when no changes)
-
-## Legacy Test Porting Plan
-- **Source suites to mine** (from the original `~/code/stakgraph` repo):
-  - `ast/src/testing/typescript/mod.rs` (and `ast/src/testing/typescript/**`) – exports node/edge expectations for the TypeScript fixtures.
-  - `ast/src/testing/react/mod.rs` – React/JSX scenarios that map cleanly to our current parser.
-  - `standalone/tests/ts_tests.rs` and the TypeScript portions of `standalone/tests/fulltest.rs` – high-level assertions over node/edge counts.
-- **Harvest ground truth**
-  1. In the legacy repo, run the relevant tests (e.g., `cargo test -p ast testing::typescript`, `cargo test -p standalone ts_tests`) with temporary code that dumps node/edge snapshots to JSON (symbol names, counts, key relationships such as `createPerson` handlers).
-  2. Save those JSON artifacts into this repo under `fixtures/legacy_snapshots/`.
-- **Recreate fixtures**
-  - Copy only the TypeScript/React source trees into `fixtures/legacy/typescript` and `fixtures/legacy/react`, removing the old `Lang`/`Graph` harness so they are plain TS projects.
-  - Normalize paths (forward slashes) to make snapshot comparisons stable.
-- **Bridge tests in this repo**
-  - Add integration tests (e.g., `tests/legacy_port.rs`) that ingest each fixture via `cg_core::ingest`, then query the Kuzu DB for:
-    - Counts per `NodeType` (`Function`, `Class`, `Import`...), using the snapshots as expected values.
-    - Presence of notable symbols (`createPerson`, `UserInterface`, etc.) and their file paths.
-    - Edge counts (`Contains`, `Imports`, later `Calls`) as those features land.
-  - Assert equality with the stored JSON to guarantee parity.
-- **Iterate**
-  - Start with constructs our parser already extracts (functions/classes/imports). Regenerate snapshots and extend tests as we add calls, data models, endpoints, and incremental-ingest logic.
-  - Provide a helper script (`scripts/export_legacy_snapshots.sh`) to rerun the legacy export when fixtures change.
+## Next Steps
+1. Build the incremental validation harness using the specification above.
+2. Publish tooling/documentation so contributors can run the suite locally (make target).
+3. Expand coverage as new features land (cross-file calls, additional node types, LSP integration).

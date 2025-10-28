@@ -43,3 +43,18 @@ clean:
 # Update dependencies
 update:
     cargo update
+
+# Run real-world smoke test
+smoke-test:
+    cargo build --release
+    ./scripts/test_real_repo.sh
+
+# Validate incremental ingestion (3 recent commits)
+validate-incremental:
+    cargo build --release
+    ./scripts/validate_incremental.py --commits HEAD~2,HEAD~1,HEAD
+
+# Validate incremental ingestion (extended - 6 commits)
+validate-incremental-full:
+    cargo build --release
+    ./scripts/validate_incremental.py --commits HEAD~10,HEAD~8,HEAD~5,HEAD~3,HEAD~1,HEAD
