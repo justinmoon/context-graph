@@ -4,6 +4,7 @@
 ✅ Basic workspace, DB layer, parser (functions/classes/interfaces/imports), ingestion pipeline, CLI
 ✅ **All critical bugs FIXED** - Production-ready for basic use
 ✅ **Phase 2 COMPLETE** - Query/find commands, improved parser with method calls and Implements edges
+✅ **Phase 3 COMPLETE** - Comprehensive test suite: 12 CLI tests, 4 legacy parity tests, real-world smoke test
 
 ## Critical Bugs (FIXED ✅)
 1. ✅ **SQL Injection Risk** - Implemented proper Cypher escaping (`escape_kuzu_string()`)
@@ -26,16 +27,17 @@
 8. ✅ Improve call graph: method calls (console.log, obj.method)
 9. ✅ Remove legacy fixture mod.rs files
 
-**Known Limitations:**
+**Known Limitations (documented in tests):**
 - Call edges only work within same file (cross-file calls need second pass)
 - Constructor calls (new ClassName) not yet extracted
 - File-to-file Import edges not yet created
+- ~45% feature parity with legacy stakgraph (tree-sitter only, no LSP)
 
-### Phase 3: Testing & Validation (IN PROGRESS)
+### Phase 3: Testing & Validation ✅ COMPLETE
 10. ✅ Add CLI smoke tests with assert_cmd (12 tests passing)
-11. 🔄 Port legacy stakgraph tests (optional, see Legacy Test Porting Plan below)
-12. 🔄 Create golden test files (optional)
-13. 🔄 Test on real-world repo (optional)
+11. ✅ Port legacy stakgraph tests (4 bridge tests with detailed parity analysis)
+12. 🔄 Create golden test files (optional - can be done incrementally)
+13. ✅ Test on real-world repo (smoke test script validates on actual projects)
 
 ## Architecture
 - **Crates**: `cg-core` (lib), `cg-cli` (binary)
