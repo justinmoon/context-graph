@@ -76,13 +76,32 @@ cg query "MATCH (n:Node) WHERE n.node_type = 'Class' RETURN n.name" --db ./graph
 cg find callers "getUser" --db ./graph.db
 ```
 
+## Recent Improvements (Oct 2025)
+
+### ✅ Constructor Call Extraction
+- Detects `new ClassName()` expressions
+- Creates Calls edges from functions to classes
+- Handles both simple and nested constructors
+
+### ✅ File-to-File Import Edges
+- Creates Import edges between File nodes
+- Resolves relative import paths (./utils, ../lib/helper)
+- Tries multiple extensions (.ts, .tsx, /index.ts)
+- Enables dependency graphs and impact analysis
+
+### ✅ Import Symbol Tracking
+- Tracks which symbols are imported from which files
+- Infrastructure ready for cross-file call resolution
+- Symbol and import maps built during ingestion
+
 ## What's Still Missing
 
-1. **Cross-file call edges** - Calls only tracked within same file (needs second pass)
+1. **Cross-file call resolution** - Infrastructure in place, resolution TODO
+   - Import symbols tracked but not yet used to resolve calls
+   - Example: `helper()` calling imported `helper` from another file
+   - Requires: Track unresolved calls in extract_calls()
 2. **More node types** - DataModel, Var, Endpoint, Request, Page defined but not extracted
-3. **File-to-file Import edges** - Import statements counted but not linked
-4. **Constructor extraction** - `new ClassName()` not yet tracked
-5. **LSP integration** - Only syntax-level analysis (60-70% accuracy)
+3. **LSP integration** - Only syntax-level analysis (60-70% accuracy)
 
 ### Phase 4: Incremental Ingestion ✅ COMPLETE
 - ✅ Store last commit hash in metadata
