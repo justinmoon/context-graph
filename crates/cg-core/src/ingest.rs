@@ -2,7 +2,7 @@ use crate::{db::Database, fs::Project, git, model::{EdgeType, Node, NodeType}, p
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct IngestOptions {
     pub db_path: String,
@@ -99,6 +99,9 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         edges_created: 0,
     };
 
+    // Track if any errors occurred during ingestion
+    let mut had_errors = false;
+
     for (file_path, parsed) in parsed_files {
         let file_node = Node::new(
             NodeType::File,
@@ -107,11 +110,24 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         );
         
         // Delete existing file and its symbols before re-inserting
-        db.delete_file_and_symbols(&file_node.id)?;
-        db.insert_node(&file_node)?;
+        if let Err(e) = db.delete_file_and_symbols(&file_node.id) {
+            warn!("Failed to delete existing file {}: {}", file_path, e);
+            had_errors = true;
+            continue;
+        }
+        
+        if let Err(e) = db.insert_node(&file_node) {
+            warn!("Failed to insert file node {}: {}", file_path, e);
+            had_errors = true;
+            continue;
+        }
 
         for node in &parsed.nodes {
-            db.insert_node(node)?;
+            if let Err(e) = db.insert_node(node) {
+                warn!("Failed to insert node {} in {}: {}", node.name, file_path, e);
+                had_errors = true;
+                continue;
+            }
             stats.symbols_created += 1;
 
             let contains_edge = crate::model::Edge {
@@ -119,24 +135,37 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
                 to_id: node.id.clone(),
                 edge_type: EdgeType::Contains,
             };
-            db.insert_edge(&contains_edge)?;
+            if let Err(e) = db.insert_edge(&contains_edge) {
+                warn!("Failed to insert contains edge in {}: {}", file_path, e);
+                had_errors = true;
+                continue;
+            }
             stats.edges_created += 1;
         }
 
         for edge in &parsed.edges {
-            db.insert_edge(edge)?;
+            if let Err(e) = db.insert_edge(edge) {
+                warn!("Failed to insert edge in {}: {}", file_path, e);
+                had_errors = true;
+                continue;
+            }
             stats.edges_created += 1;
         }
 
         stats.files_processed += 1;
     }
 
-    // Store current commit hash if in a git repo
-    if git::is_git_repo(project_root) {
+    // Only store commit hash if ingestion was successful (no errors)
+    if !had_errors && git::is_git_repo(project_root) {
         if let Ok(commit) = git::get_current_commit(project_root) {
-            db.set_metadata("last_commit", &commit)?;
-            info!("Stored commit hash: {}", &commit[..8]);
+            if let Err(e) = db.set_metadata("last_commit", &commit) {
+                warn!("Failed to store commit hash: {}", e);
+            } else {
+                info!("Stored commit hash: {}", &commit[..8]);
+            }
         }
+    } else if had_errors {
+        warn!("Ingestion had errors, not updating commit hash");
     }
 
     info!("Ingestion complete");
@@ -147,12 +176,51 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
     Ok(stats)
 }
 
+struct IncrementalChanges {
+    files_to_process: Vec<PathBuf>,
+    files_to_delete: Vec<PathBuf>,
+}
+
 /// Get list of changed files for incremental ingestion
 /// Returns None if incremental ingestion is not possible
 fn get_incremental_files(
     db: &mut Database,
     project_root: &PathBuf,
 ) -> Result<Option<Vec<PathBuf>>> {
+    let changes = match get_incremental_changes(db, project_root) {
+        Ok(Some(changes)) => changes,
+        Ok(None) => return Ok(None),
+        Err(e) => {
+            warn!("Incremental ingestion failed ({}), falling back to full ingestion", e);
+            return Ok(None);
+        }
+    };
+
+    // Delete files that were removed or renamed
+    info!("Deleting {} files", changes.files_to_delete.len());
+    for path in &changes.files_to_delete {
+        // Convert to string representation that matches what's stored in DB
+        let path_str = path.display().to_string();
+        let file_id = Node::new(NodeType::File, path_str.clone(), path_str.clone()).id;
+        
+        info!("Attempting to delete file: {} (id: {})", path_str, file_id);
+        match db.delete_file_and_symbols(&file_id) {
+            Ok(_) => info!("Successfully deleted: {}", path_str),
+            Err(e) => {
+                // File might not exist in DB (e.g., not a TS file in previous ingest)
+                warn!("Could not delete file {}: {}", path_str, e);
+            }
+        }
+    }
+
+    Ok(Some(changes.files_to_process))
+}
+
+/// Get incremental changes with file status
+fn get_incremental_changes(
+    db: &mut Database,
+    project_root: &PathBuf,
+) -> Result<Option<IncrementalChanges>> {
     // Check if this is a git repo
     if !git::is_git_repo(project_root) {
         return Ok(None);
@@ -170,31 +238,57 @@ fn get_incremental_files(
     // If commits are the same, no changes
     if last_commit == current_commit {
         info!("No changes since last ingestion (commit: {})", &current_commit[..8]);
-        return Ok(Some(Vec::new()));
+        return Ok(Some(IncrementalChanges {
+            files_to_process: Vec::new(),
+            files_to_delete: Vec::new(),
+        }));
     }
 
-    // Get changed files
-    let changed_files = git::get_changed_files(project_root, &last_commit, &current_commit)?;
+    // Get changed files with status
+    let file_changes = git::get_file_changes(project_root, &last_commit, &current_commit)?;
 
-    // Filter for TypeScript files only
     let ts_extensions: HashSet<&str> = ["ts", "tsx", "d.ts"].iter().copied().collect();
-    let ts_changed_files: Vec<PathBuf> = changed_files
-        .into_iter()
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ts_extensions.contains(ext))
-                .unwrap_or(false)
-        })
-        .collect();
+    
+    let mut files_to_process = Vec::new();
+    let mut files_to_delete = Vec::new();
+
+    for change in file_changes {
+        // Check if it's a TypeScript file
+        let is_ts = change.path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ts_extensions.contains(ext))
+            .unwrap_or(false);
+
+        if !is_ts {
+            continue;
+        }
+
+        match change.change_type {
+            git::FileChangeType::Added | git::FileChangeType::Modified => {
+                files_to_process.push(change.path);
+            }
+            git::FileChangeType::Deleted => {
+                files_to_delete.push(change.path);
+            }
+            git::FileChangeType::Renamed { old_path } => {
+                // Delete the old path, process the new path
+                files_to_delete.push(old_path);
+                files_to_process.push(change.path);
+            }
+        }
+    }
 
     info!(
-        "Changed since {}: {} files",
+        "Changed since {}: {} to process, {} to delete",
         &last_commit[..8],
-        ts_changed_files.len()
+        files_to_process.len(),
+        files_to_delete.len()
     );
 
-    Ok(Some(ts_changed_files))
+    Ok(Some(IncrementalChanges {
+        files_to_process,
+        files_to_delete,
+    }))
 }
 
 pub struct IngestStats {

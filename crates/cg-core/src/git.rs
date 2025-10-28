@@ -2,6 +2,20 @@ use crate::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileChangeType {
+    Added,
+    Modified,
+    Deleted,
+    Renamed { old_path: PathBuf },
+}
+
+#[derive(Debug, Clone)]
+pub struct FileChange {
+    pub path: PathBuf,
+    pub change_type: FileChangeType,
+}
+
 /// Get the current git commit hash for a repository
 pub fn get_current_commit(repo_path: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -23,17 +37,17 @@ pub fn get_current_commit(repo_path: &Path) -> Result<String> {
     Ok(commit)
 }
 
-/// Get list of changed files between two commits
-pub fn get_changed_files(
+/// Get list of changed files between two commits with their change status
+pub fn get_file_changes(
     repo_path: &Path,
     from_commit: &str,
     to_commit: &str,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<FileChange>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_path)
         .arg("diff")
-        .arg("--name-only")
+        .arg("--name-status")
         .arg(format!("{}..{}", from_commit, to_commit))
         .output()?;
 
@@ -42,12 +56,62 @@ pub fn get_changed_files(
         return Err(anyhow::anyhow!("Failed to get changed files: {}", stderr));
     }
 
-    let files = String::from_utf8(output.stdout)?
-        .lines()
-        .map(|line| repo_path.join(line.trim()))
-        .collect();
+    let mut changes = Vec::new();
+    for line in String::from_utf8(output.stdout)?.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
 
-    Ok(files)
+        let status = parts[0];
+        
+        // Helper to canonicalize paths to match what's stored in DB
+        let canonicalize_path = |rel_path: &str| -> PathBuf {
+            let full_path = repo_path.join(rel_path);
+            // Try to canonicalize, but fall back to the full path if it fails
+            // (e.g., for deleted files that no longer exist)
+            std::fs::canonicalize(&full_path).unwrap_or(full_path)
+        };
+        
+        let change = match status.chars().next() {
+            Some('A') => FileChange {
+                path: canonicalize_path(parts[1]),
+                change_type: FileChangeType::Added,
+            },
+            Some('M') => FileChange {
+                path: canonicalize_path(parts[1]),
+                change_type: FileChangeType::Modified,
+            },
+            Some('D') => FileChange {
+                path: canonicalize_path(parts[1]),
+                change_type: FileChangeType::Deleted,
+            },
+            Some('R') if parts.len() >= 3 => {
+                // Rename: R100 old_path new_path
+                FileChange {
+                    path: canonicalize_path(parts[2]),
+                    change_type: FileChangeType::Renamed {
+                        old_path: canonicalize_path(parts[1]),
+                    },
+                }
+            }
+            _ => continue, // Skip other statuses (C for copy, etc.)
+        };
+
+        changes.push(change);
+    }
+
+    Ok(changes)
+}
+
+/// Get list of changed files between two commits (simplified, no status)
+pub fn get_changed_files(
+    repo_path: &Path,
+    from_commit: &str,
+    to_commit: &str,
+) -> Result<Vec<PathBuf>> {
+    let changes = get_file_changes(repo_path, from_commit, to_commit)?;
+    Ok(changes.into_iter().map(|c| c.path).collect())
 }
 
 /// Check if a path is in a git repository
