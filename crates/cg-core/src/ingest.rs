@@ -1,4 +1,4 @@
-use crate::{db::Database, fs::Project, git, model::{EdgeType, Node, NodeType}, parser, Result};
+use crate::{db::Database, fs::Project, git, model::{Edge, EdgeType, Node, NodeType}, parser, Result};
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -102,7 +102,12 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
     // Track if any errors occurred during ingestion
     let mut had_errors = false;
 
+    // Collect all import edges for processing after files are inserted
+    let mut all_import_edges: Vec<(String, String)> = Vec::new();
+
     for (file_path, parsed) in parsed_files {
+        // Collect import edges from this file
+        all_import_edges.extend(parsed.import_edges.clone());
         let file_node = Node::new(
             NodeType::File,
             file_path.clone(),
@@ -153,6 +158,25 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         }
 
         stats.files_processed += 1;
+    }
+
+    // Create Import edges between files
+    for (from_file, to_file) in all_import_edges {
+        let from_node = Node::new(NodeType::File, from_file.clone(), from_file.clone());
+        let to_node = Node::new(NodeType::File, to_file.clone(), to_file.clone());
+        
+        let import_edge = Edge {
+            from_id: from_node.id.clone(),
+            to_id: to_node.id.clone(),
+            edge_type: EdgeType::Imports,
+        };
+        
+        if let Err(e) = db.insert_edge(&import_edge) {
+            debug!("Failed to insert import edge {} -> {}: {}", from_file, to_file, e);
+            // Don't fail the whole ingestion for import edges
+        } else {
+            stats.edges_created += 1;
+        }
     }
 
     // Only store commit hash if ingestion was successful (no errors)

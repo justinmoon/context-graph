@@ -7,6 +7,7 @@ use tracing::debug;
 pub struct ParsedFile {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    pub import_edges: Vec<(String, String)>, // (from_file, to_file) pairs
 }
 
 pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
@@ -38,6 +39,13 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
         .collect();
     let mut edges = extract_calls(path, content, &tree, &functions)?;
 
+    // Extract constructor call edges (new ClassName())
+    let classes: Vec<Node> = nodes.iter()
+        .filter(|n| matches!(n.node_type, NodeType::Class))
+        .cloned()
+        .collect();
+    edges.extend(extract_constructor_calls(path, content, &tree, &functions, &classes)?);
+
     // Extract extends and implements edges for classes and interfaces
     let classes_and_interfaces: Vec<Node> = nodes.iter()
         .filter(|n| matches!(n.node_type, NodeType::Class | NodeType::Interface))
@@ -45,9 +53,12 @@ pub fn parse_typescript_file(path: &str, content: &str) -> Result<ParsedFile> {
         .collect();
     edges.extend(extract_extends_implements(path, content, &tree, &classes_and_interfaces)?);
 
-    debug!("Parsed {}: {} nodes, {} edges", path, nodes.len(), edges.len());
+    // Extract file-to-file import edges
+    let import_edges = extract_import_edges(path, content, &tree)?;
 
-    Ok(ParsedFile { nodes, edges })
+    debug!("Parsed {}: {} nodes, {} edges, {} import edges", path, nodes.len(), edges.len(), import_edges.len());
+
+    Ok(ParsedFile { nodes, edges, import_edges })
 }
 
 fn extract_functions(path: &str, content: &str, tree: &tree_sitter::Tree, nodes: &mut Vec<Node>) -> Result<()> {
@@ -188,27 +199,30 @@ fn extract_imports(path: &str, content: &str, tree: &tree_sitter::Tree, nodes: &
     let query = Query::new(
         &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         r#"
-        (import_statement) @import
+        (import_statement
+            source: (string
+                (string_fragment) @source_path)) @import
         "#,
     )?;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
 
-    let mut import_statements = Vec::new();
+    let mut import_paths = Vec::new();
     while let Some(match_) = matches.next() {
-        if let Some(import) = match_.captures.first() {
-            let import_text = &content[import.node.byte_range()];
-            import_statements.push(import_text);
+        if let Some(source_path_capture) = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "source_path")
+        {
+            let source_path = &content[source_path_capture.node.byte_range()];
+            import_paths.push(source_path.to_string());
         }
     }
 
-    if !import_statements.is_empty() {
-        // TODO: Full import bodies cause Kuzu parsing issues with nested quotes
-        // Need to investigate proper Cypher string escaping or use a different storage method
+    if !import_paths.is_empty() {
+        // Store import metadata node for legacy compatibility
         let node = Node::new(
             NodeType::Import,
-            format!("{} imports", import_statements.len()),
+            format!("{} imports", import_paths.len()),
             path.to_string(),
         );
         
@@ -216,6 +230,67 @@ fn extract_imports(path: &str, content: &str, tree: &tree_sitter::Tree, nodes: &
     }
 
     Ok(())
+}
+
+fn extract_import_edges(
+    path: &str,
+    content: &str,
+    tree: &tree_sitter::Tree,
+) -> Result<Vec<(String, String)>> {
+    // Returns vec of (from_file, to_file) tuples
+    let query = Query::new(
+        &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        r#"
+        (import_statement
+            source: (string
+                (string_fragment) @source_path))
+        "#,
+    )?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+    let mut import_paths = Vec::new();
+    while let Some(match_) = matches.next() {
+        if let Some(source_path_capture) = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "source_path")
+        {
+            let source_path = &content[source_path_capture.node.byte_range()];
+            let resolved_path = resolve_import_path(path, source_path)?;
+            if let Some(resolved) = resolved_path {
+                import_paths.push((path.to_string(), resolved));
+            }
+        }
+    }
+
+    Ok(import_paths)
+}
+
+fn resolve_import_path(from_file: &str, import_path: &str) -> Result<Option<String>> {
+    use std::path::{Path, PathBuf};
+    
+    // Skip node_modules and external packages
+    if !import_path.starts_with('.') {
+        return Ok(None);
+    }
+    
+    let from_dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
+    let mut target_path = from_dir.join(import_path);
+    
+    // Try different extensions
+    let extensions = ["", ".ts", ".tsx", "/index.ts", "/index.tsx"];
+    for ext in &extensions {
+        let mut candidate = target_path.clone();
+        if !ext.is_empty() {
+            candidate = PathBuf::from(format!("{}{}", target_path.display(), ext));
+        }
+        
+        if let Ok(canonical) = std::fs::canonicalize(&candidate) {
+            return Ok(Some(canonical.display().to_string()));
+        }
+    }
+    
+    Ok(None)
 }
 
 fn extract_calls(
@@ -285,6 +360,64 @@ fn find_containing_function(line: usize, functions: &[Node]) -> Option<&Node> {
             false
         }
     })
+}
+
+fn extract_constructor_calls(
+    _path: &str,
+    content: &str,
+    tree: &tree_sitter::Tree,
+    functions: &[Node],
+    classes: &[Node],
+) -> Result<Vec<Edge>> {
+    // Query for new expressions: new ClassName()
+    let query = Query::new(
+        &tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        r#"
+        (new_expression
+            constructor: [
+                (identifier) @class_name
+                (member_expression
+                    property: (property_identifier) @nested_class)
+            ])
+        "#,
+    )?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+    let mut edges = Vec::new();
+
+    while let Some(match_) = matches.next() {
+        // Try to find the class name capture
+        let class_name_opt = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "class_name")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        // Try to find nested class (e.g., Foo.Bar in new Foo.Bar())
+        let nested_class_opt = match_.captures.iter()
+            .find(|c| query.capture_names()[c.index as usize] == "nested_class")
+            .map(|c| &content[c.node.byte_range()]);
+        
+        let class_name = class_name_opt.or(nested_class_opt);
+        
+        if let Some(name) = class_name {
+            let call_line = match_.captures.first().unwrap().node.start_position().row;
+            
+            // Find the containing function where the constructor is called
+            if let Some(caller) = find_containing_function(call_line, functions) {
+                // Find the class being instantiated
+                if let Some(class) = classes.iter().find(|c| c.name == name) {
+                    edges.push(Edge {
+                        from_id: caller.id.clone(),
+                        to_id: class.id.clone(),
+                        edge_type: EdgeType::Calls,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(edges)
 }
 
 fn extract_extends_implements(
