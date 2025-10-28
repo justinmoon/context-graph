@@ -285,6 +285,25 @@ class IncrementalValidator:
     
     def run_validation(self, commits: List[str]) -> List[ValidationResult]:
         """Run validation across a series of commits"""
+        # Check for dirty worktree before we start checking out commits
+        try:
+            status_output = self.run_git_command(["status", "--porcelain"])
+            if status_output.strip():
+                print("\n⚠️  WARNING: Repository has uncommitted changes!")
+                print("The validation script will checkout different commits.")
+                print("\nUncommitted changes detected:")
+                for line in status_output.strip().split('\n')[:5]:  # Show first 5 files
+                    print(f"  {line}")
+                if len(status_output.strip().split('\n')) > 5:
+                    print(f"  ... and {len(status_output.strip().split('\n')) - 5} more")
+                print("\n❌ Please commit or stash your changes before running validation.")
+                print("   git stash")
+                print("   # or")
+                print("   git commit -am 'WIP'")
+                sys.exit(1)
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Could not check git status: {e}")
+        
         # Create database paths
         db_full = self.workspace / "db_full.db"
         db_incremental = self.workspace / "db_incremental.db"
