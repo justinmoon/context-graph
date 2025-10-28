@@ -47,6 +47,7 @@
             rust-analyzer
             just
             cargo-watch
+            jq
           ];
         };
         
