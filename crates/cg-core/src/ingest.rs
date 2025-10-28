@@ -1,5 +1,7 @@
-use crate::{db::Database, fs::Project, model::{EdgeType, Node, NodeType}, parser, Result};
+use crate::{db::Database, fs::Project, git, model::{EdgeType, Node, NodeType}, parser, Result};
 use rayon::prelude::*;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use tracing::{info, warn};
 
 pub struct IngestOptions {
@@ -7,6 +9,7 @@ pub struct IngestOptions {
     pub project_path: String,
     pub threads: Option<usize>,
     pub clean: bool,
+    pub incremental: bool,
 }
 
 pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
@@ -22,7 +25,21 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
     }
 
     let project = Project::discover(&options.project_path)?;
-    let files = project.find_typescript_files()?;
+    let project_root = &project.root;
+    
+    // Determine which files to process
+    let files = if options.incremental && !options.clean {
+        // Try incremental ingestion
+        if let Some(changed_files) = get_incremental_files(&mut db, project_root)? {
+            info!("Incremental mode: processing {} changed files", changed_files.len());
+            changed_files
+        } else {
+            info!("Incremental mode unavailable, falling back to full ingestion");
+            project.find_typescript_files()?
+        }
+    } else {
+        project.find_typescript_files()?
+    };
     
     info!("Processing {} files", files.len());
 
@@ -114,12 +131,70 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         stats.files_processed += 1;
     }
 
+    // Store current commit hash if in a git repo
+    if git::is_git_repo(project_root) {
+        if let Ok(commit) = git::get_current_commit(project_root) {
+            db.set_metadata("last_commit", &commit)?;
+            info!("Stored commit hash: {}", &commit[..8]);
+        }
+    }
+
     info!("Ingestion complete");
     info!("  Files processed: {}", stats.files_processed);
     info!("  Symbols created: {}", stats.symbols_created);
     info!("  Edges created: {}", stats.edges_created);
 
     Ok(stats)
+}
+
+/// Get list of changed files for incremental ingestion
+/// Returns None if incremental ingestion is not possible
+fn get_incremental_files(
+    db: &mut Database,
+    project_root: &PathBuf,
+) -> Result<Option<Vec<PathBuf>>> {
+    // Check if this is a git repo
+    if !git::is_git_repo(project_root) {
+        return Ok(None);
+    }
+
+    // Get last commit from metadata
+    let last_commit = match db.get_metadata("last_commit")? {
+        Some(commit) => commit,
+        None => return Ok(None), // No previous ingestion
+    };
+
+    // Get current commit
+    let current_commit = git::get_current_commit(project_root)?;
+
+    // If commits are the same, no changes
+    if last_commit == current_commit {
+        info!("No changes since last ingestion (commit: {})", &current_commit[..8]);
+        return Ok(Some(Vec::new()));
+    }
+
+    // Get changed files
+    let changed_files = git::get_changed_files(project_root, &last_commit, &current_commit)?;
+
+    // Filter for TypeScript files only
+    let ts_extensions: HashSet<&str> = ["ts", "tsx", "d.ts"].iter().copied().collect();
+    let ts_changed_files: Vec<PathBuf> = changed_files
+        .into_iter()
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ts_extensions.contains(ext))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    info!(
+        "Changed since {}: {} files",
+        &last_commit[..8],
+        ts_changed_files.len()
+    );
+
+    Ok(Some(ts_changed_files))
 }
 
 pub struct IngestStats {

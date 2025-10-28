@@ -29,6 +29,10 @@ enum Commands {
         /// Clean the database before ingestion
         #[arg(long)]
         clean: bool,
+
+        /// Incremental mode: only process changed files (requires git)
+        #[arg(long)]
+        incremental: bool,
     },
 
     /// Execute a raw SQL query against the graph
@@ -96,12 +100,14 @@ fn main() -> Result<()> {
             project,
             threads,
             clean,
+            incremental,
         } => {
             let options = cg_core::ingest::IngestOptions {
                 db_path: db,
                 project_path: project,
                 threads,
                 clean,
+                incremental,
             };
             
             match cg_core::ingest::ingest(options) {

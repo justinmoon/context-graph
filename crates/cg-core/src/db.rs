@@ -208,6 +208,43 @@ impl Database {
         
         Ok(())
     }
+
+    pub fn get_metadata(&mut self, key: &str) -> Result<Option<String>> {
+        let conn = self.get_conn()?;
+        let query = format!(
+            "MATCH (m:Metadata {{key: '{}'}}) RETURN m.value",
+            escape_kuzu_string(key)
+        );
+        
+        for row in conn.query(&query)? {
+            if let Value::String(value) = &row[0] {
+                return Ok(Some(value.clone()));
+            }
+        }
+        
+        Ok(None)
+    }
+
+    pub fn set_metadata(&mut self, key: &str, value: &str) -> Result<()> {
+        let conn = self.get_conn()?;
+        
+        // Delete existing metadata with this key
+        let delete_query = format!(
+            "MATCH (m:Metadata {{key: '{}'}}) DELETE m",
+            escape_kuzu_string(key)
+        );
+        conn.query(&delete_query)?;
+        
+        // Insert new metadata
+        let insert_query = format!(
+            "CREATE (m:Metadata {{key: '{}', value: '{}'}})",
+            escape_kuzu_string(key),
+            escape_kuzu_string(value)
+        );
+        conn.query(&insert_query)?;
+        
+        Ok(())
+    }
 }
 
 #[cfg(test)]

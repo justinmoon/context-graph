@@ -39,6 +39,7 @@ fn test_legacy_parity_node_counts() {
         project_path: typescript_fixture_path(),
         threads: Some(2),
         clean: true,
+        incremental: false,
     };
     
     let _stats = ingest(options).expect("Ingestion should succeed");
@@ -106,6 +107,7 @@ fn test_legacy_parity_edge_counts() {
         project_path: typescript_fixture_path(),
         threads: Some(2),
         clean: true,
+        incremental: false,
     };
     
     let _stats = ingest(options).expect("Ingestion should succeed");
@@ -169,6 +171,7 @@ fn test_legacy_parity_notable_symbols() {
         project_path: typescript_fixture_path(),
         threads: Some(2),
         clean: true,
+        incremental: false,
     };
     
     let _stats = ingest(options).expect("Ingestion should succeed");
@@ -225,6 +228,7 @@ fn test_current_implementation_capabilities() {
         project_path: typescript_fixture_path(),
         threads: Some(2),
         clean: true,
+        incremental: false,
     };
     
     let stats = ingest(options).expect("Ingestion should succeed");
