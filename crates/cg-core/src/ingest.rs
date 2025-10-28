@@ -48,18 +48,16 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
         project.root.display().to_string(),
         project.root.display().to_string(),
     );
-    // Delete and re-create repository node
-    db.delete_file_and_symbols(&repository_node.id)?;
-    db.insert_node(&repository_node)?;
+    // Insert or update repository node
+    db.upsert_node(&repository_node)?;
 
     let language_node = Node::new(
         NodeType::Language,
         "typescript".to_string(),
         project.root.display().to_string(),
     );
-    // Delete and re-create language node
-    db.delete_file_and_symbols(&language_node.id)?;
-    db.insert_node(&language_node)?;
+    // Insert or update language node
+    db.upsert_node(&language_node)?;
 
     let parse_files = || -> Vec<_> {
         files.par_iter()
@@ -138,15 +136,16 @@ pub fn ingest(options: IngestOptions) -> Result<IngestStats> {
             file_path.clone(),
         );
         
-        // Delete existing file and its symbols before re-inserting
+        // Delete existing symbols and Contains edges (preserves Import edges)
         if let Err(e) = db.delete_file_and_symbols(&file_node.id) {
-            warn!("Failed to delete existing file {}: {}", file_path, e);
+            warn!("Failed to delete existing symbols for {}: {}", file_path, e);
             had_errors = true;
             continue;
         }
         
-        if let Err(e) = db.insert_node(&file_node) {
-            warn!("Failed to insert file node {}: {}", file_path, e);
+        // Insert or update the file node (may already exist from previous ingestion)
+        if let Err(e) = db.upsert_node(&file_node) {
+            warn!("Failed to upsert file node {}: {}", file_path, e);
             had_errors = true;
             continue;
         }
@@ -254,7 +253,7 @@ fn get_incremental_files(
         }
     };
 
-    // Delete files that were removed or renamed
+    // Delete files that were removed or renamed (fully delete these)
     info!("Deleting {} files", changes.files_to_delete.len());
     for path in &changes.files_to_delete {
         // Convert to string representation that matches what's stored in DB
@@ -262,7 +261,8 @@ fn get_incremental_files(
         let file_id = Node::new(NodeType::File, path_str.clone(), path_str.clone()).id;
         
         info!("Attempting to delete file: {} (id: {})", path_str, file_id);
-        match db.delete_file_and_symbols(&file_id) {
+        // Use delete_file_node for removed files (deletes everything including Import edges)
+        match db.delete_file_node(&file_id) {
             Ok(_) => info!("Successfully deleted: {}", path_str),
             Err(e) => {
                 // File might not exist in DB (e.g., not a TS file in previous ingest)

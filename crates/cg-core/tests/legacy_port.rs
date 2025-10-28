@@ -153,7 +153,7 @@ fn test_legacy_parity_edge_counts() {
     
     println!("\n✅ Core edge extraction working (partial parity with legacy)");
     println!("⚠️  Missing: Handler edges (endpoint→function)");
-    println!("⚠️  Missing: Imports edges (file→file relationships)");
+    println!("✅ Imports edges implemented (file→file relationships)");
     println!("⚠️  Missing: Uses edges (requires LSP)");
 }
 

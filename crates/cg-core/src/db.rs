@@ -105,6 +105,49 @@ impl Database {
         conn.query(&query)?;
         Ok(())
     }
+    
+    pub fn upsert_node(&mut self, node: &Node) -> Result<()> {
+        let start_line = node.start_line.map(|l| l as i32).unwrap_or(-1);
+        let end_line = node.end_line.map(|l| l as i32).unwrap_or(-1);
+        
+        // Check if node exists
+        let check_query = format!(
+            "MATCH (n:Node {{id: '{}'}}) RETURN count(n) as count",
+            escape_kuzu_string(&node.id)
+        );
+        
+        let exists = {
+            let conn = self.get_conn()?;
+            let mut exists = false;
+            for row in conn.query(&check_query)? {
+                if let Value::Int64(count) = &row[0] {
+                    exists = *count > 0;
+                }
+            }
+            exists
+        };
+        
+        if exists {
+            // Update existing node
+            let update_query = format!(
+                "MATCH (n:Node {{id: '{}'}}) SET n.node_type = '{}', n.name = '{}', n.file = '{}', n.body = '{}', n.start_line = {}, n.end_line = {}",
+                escape_kuzu_string(&node.id),
+                node.node_type.as_str(),
+                escape_kuzu_string(&node.name),
+                escape_kuzu_string(&node.file),
+                escape_kuzu_string(&node.body),
+                start_line,
+                end_line,
+            );
+            let conn = self.get_conn()?;
+            conn.query(&update_query)?;
+        } else {
+            // Insert new node
+            self.insert_node(node)?;
+        }
+        
+        Ok(())
+    }
 
     pub fn insert_edge(&mut self, edge: &Edge) -> Result<()> {
         let conn = self.get_conn()?;
@@ -191,20 +234,43 @@ impl Database {
     pub fn delete_file_and_symbols(&mut self, file_id: &str) -> Result<()> {
         let conn = self.get_conn()?;
         
-        // Delete symbols contained by this file (via Contains edges only)
-        // This prevents accidentally deleting nodes connected via other edge types (Imports, Uses, etc.)
-        let query = format!(
-            "MATCH (f:Node {{id: '{}'}})-[e:Edge {{edge_type: 'Contains'}}]->(s:Node) DETACH DELETE s",
+        // Delete all symbols contained by this file
+        let delete_symbols_query = format!(
+            "MATCH (f:Node {{id: '{}'}})-[:EDGE {{edge_type: 'Contains'}}]->(s:Node) DETACH DELETE s",
             escape_kuzu_string(file_id)
         );
-        conn.query(&query)?;
+        conn.query(&delete_symbols_query)?;
         
-        // Delete the file node itself and all its edges
-        let query = format!(
+        // Delete Contains edges from this file (symbols will be recreated)
+        let delete_contains_query = format!(
+            "MATCH (f:Node {{id: '{}'}})-[e:EDGE {{edge_type: 'Contains'}}]->() DELETE e",
+            escape_kuzu_string(file_id)
+        );
+        conn.query(&delete_contains_query)?;
+        
+        // Note: We do NOT delete the file node or its Import edges here
+        // This preserves Import edges from other files that point to this file
+        // The file node will be re-inserted, which is fine (upsert behavior)
+        
+        Ok(())
+    }
+    
+    pub fn delete_file_node(&mut self, file_id: &str) -> Result<()> {
+        let conn = self.get_conn()?;
+        
+        // First delete all symbols
+        let delete_symbols_query = format!(
+            "MATCH (f:Node {{id: '{}'}})-[:EDGE {{edge_type: 'Contains'}}]->(s:Node) DETACH DELETE s",
+            escape_kuzu_string(file_id)
+        );
+        conn.query(&delete_symbols_query)?;
+        
+        // Then delete the file node itself and all its edges (including Import edges)
+        let delete_file_query = format!(
             "MATCH (f:Node {{id: '{}'}}) DETACH DELETE f",
             escape_kuzu_string(file_id)
         );
-        conn.query(&query)?;
+        conn.query(&delete_file_query)?;
         
         Ok(())
     }
