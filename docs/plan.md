@@ -86,8 +86,12 @@ cg find callers "getUser" --db ./graph.db
 
 ### Phase 4: Incremental Ingestion ✅ COMPLETE
 - ✅ Store last commit hash in metadata
-- ✅ Use `git diff` to find changed files
+- ✅ Use `git diff --name-status` to detect file changes/deletions/renames
 - ✅ Re-ingest only touched files
+- ✅ Delete removed/renamed files from database
+- ✅ Graceful fallback on unreachable commits (rebase, force push)
+- ✅ Only update metadata on successful ingestion
+- ✅ 6 automated tests (4 passing, 2 ignored on macOS)
 - ✅ 100x+ faster for small changes (instant when no changes)
 
 ## Legacy Test Porting Plan
