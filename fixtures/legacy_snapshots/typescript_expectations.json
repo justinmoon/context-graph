@@ -1,0 +1,69 @@
+{
+  "description": "Expected node and edge counts from legacy stakgraph test suite",
+  "source": "~/code/stakgraph/ast/src/testing/typescript/mod.rs",
+  "use_lsp": false,
+  "nodes": {
+    "Language": 1,
+    "Repository": 1,
+    "File": 5,
+    "Import": 5,
+    "Library": 11,
+    "Function": 8,
+    "Class": 5,
+    "Directory": 2,
+    "DataModel": 10,
+    "Trait": 2,
+    "Var": 4,
+    "Endpoint": 2
+  },
+  "edges": {
+    "Contains": 66,
+    "Calls": 5,
+    "Imports": 12,
+    "Handler": 2,
+    "Implements": 3,
+    "Uses": 0
+  },
+  "total_nodes": 56,
+  "total_edges": 88,
+  "notable_symbols": {
+    "functions": [
+      "registerRoutes",
+      "getPerson",
+      "createPerson",
+      "getPersonById",
+      "newPerson",
+      "initDatabases",
+      "deprecated",
+      "log"
+    ],
+    "classes": [
+      "SequelizePerson",
+      "SequelizePersonService",
+      "TypeORMPerson",
+      "TypeOrmPersonService",
+      "PrismaPersonService"
+    ],
+    "endpoints": [
+      {
+        "path": "/person",
+        "verb": "POST",
+        "handler": "createPerson"
+      },
+      {
+        "path": "/person/:id",
+        "verb": "GET",
+        "handler": "getPerson"
+      }
+    ]
+  },
+  "notes": [
+    "Without LSP mode (tree-sitter only)",
+    "DataModel nodes require TypeORM/Sequelize/Prisma decorators/schema detection",
+    "Var nodes require variable declaration extraction",
+    "Endpoint nodes require Express route pattern extraction",
+    "Handler edges connect endpoints to their handler functions",
+    "Imports edges are file-to-file relationships",
+    "Uses edges require LSP or advanced analysis"
+  ]
+}

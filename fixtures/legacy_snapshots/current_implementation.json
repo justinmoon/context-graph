@@ -1,0 +1,39 @@
+{
+  "description": "Current implementation capabilities (as of Phase 2/3)",
+  "extracted_nodes": {
+    "File": "✅ Extracted",
+    "Function": "✅ Extracted (8 functions)",
+    "Class": "✅ Extracted (5 classes)",
+    "Interface": "✅ Extracted (uses Trait in legacy, we call it Interface)",
+    "Import": "✅ Extracted (counted but not detailed)"
+  },
+  "not_yet_extracted": {
+    "Language": "❌ Not created",
+    "Repository": "❌ Not created",
+    "Directory": "❌ Not created",
+    "Library": "❌ Not created",
+    "DataModel": "❌ Not extracted (requires decorator/schema detection)",
+    "Var": "❌ Not extracted",
+    "Endpoint": "❌ Not extracted (requires route pattern detection)"
+  },
+  "extracted_edges": {
+    "Contains": "✅ File→Symbol relationships",
+    "Calls": "✅ Within-file function calls (method calls supported)",
+    "Implements": "✅ Class implements interface, interface extends interface"
+  },
+  "not_yet_extracted": {
+    "Imports": "❌ File→File import relationships (not linked)",
+    "Handler": "❌ Endpoint→Function relationships",
+    "Uses": "❌ Variable/function usage (requires LSP)"
+  },
+  "current_test_results": {
+    "nodes_extracted": 37,
+    "edges_extracted": 42,
+    "files_processed": 12
+  },
+  "gap_analysis": {
+    "missing_node_types": 7,
+    "missing_edge_types": 3,
+    "completeness": "~45% of legacy feature parity"
+  }
+}
