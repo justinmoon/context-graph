@@ -288,14 +288,17 @@ class IncrementalValidator:
         # Check for dirty worktree before we start checking out commits
         try:
             status_output = self.run_git_command(["status", "--porcelain"])
-            if status_output.strip():
+            stripped = status_output.strip()
+            if stripped:
+                lines = stripped.splitlines()
                 print("\n⚠️  WARNING: Repository has uncommitted changes!")
                 print("The validation script will checkout different commits.")
                 print("\nUncommitted changes detected:")
-                for line in status_output.strip().split('\n')[:5]:  # Show first 5 files
+                for line in lines[:5]:  # Show first 5 files
                     print(f"  {line}")
-                if len(status_output.strip().split('\n')) > 5:
-                    print(f"  ... and {len(status_output.strip().split('\n')) - 5} more")
+                if len(lines) > 5:
+                    extra = len(lines) - 5
+                    print(f"  ... and {extra} more")
                 print("\n❌ Please commit or stash your changes before running validation.")
                 print("   git stash")
                 print("   # or")

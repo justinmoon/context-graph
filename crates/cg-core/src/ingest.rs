@@ -1,6 +1,5 @@
 use crate::{db::Database, fs::Project, git, model::{Edge, EdgeType, Node, NodeType}, parser, Result};
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
@@ -305,19 +304,11 @@ fn get_incremental_changes(
     // Get changed files with status
     let file_changes = git::get_file_changes(project_root, &last_commit, &current_commit)?;
 
-    let ts_extensions: HashSet<&str> = ["ts", "tsx", "d.ts"].iter().copied().collect();
-    
     let mut files_to_process = Vec::new();
     let mut files_to_delete = Vec::new();
 
     for change in file_changes {
-        // Check if it's a TypeScript file
-        let is_ts = change.path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ts_extensions.contains(ext))
-            .unwrap_or(false);
-
-        if !is_ts {
+        if !crate::fs::is_supported_ts_file(&change.path) {
             continue;
         }
 

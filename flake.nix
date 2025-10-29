@@ -10,7 +10,10 @@
   outputs = { self, nixpkgs, flake-utils, crane }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
         
         craneLib = crane.mkLib pkgs;
         
@@ -19,15 +22,15 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
+          doCheck = false;  # Skip tests in nix build (some fail without git repo)
           nativeBuildInputs = with pkgs; [
             pkg-config
+            cmake
           ];
           buildInputs = with pkgs; [
             openssl
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.libiconv
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+            libiconv
           ];
         };
         

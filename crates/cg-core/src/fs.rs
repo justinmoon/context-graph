@@ -3,6 +3,24 @@ use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
+/// Returns true if the given path should be treated as a TypeScript source file.
+/// Currently we index .ts and .tsx files but deliberately skip declaration files (.d.ts)
+/// to match the legacy ingestion behaviour.
+pub fn is_supported_ts_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+
+    match ext {
+        "ts" => {
+            let path_str = path.to_string_lossy();
+            !path_str.ends_with(".d.ts")
+        }
+        "tsx" => true,
+        _ => false,
+    }
+}
+
 pub struct Project {
     pub root: PathBuf,
 }
@@ -37,12 +55,10 @@ impl Project {
             match result {
                 Ok(entry) => {
                     let path = entry.path();
-                    if let Some(ext) = path.extension() {
-                        if ext == "ts" || ext == "tsx" {
-                            if path.is_file() {
-                                debug!("Found TypeScript file: {}", path.display());
-                                files.push(path.to_path_buf());
-                            }
+                    if is_supported_ts_file(path) {
+                        if path.is_file() {
+                            debug!("Found TypeScript file: {}", path.display());
+                            files.push(path.to_path_buf());
                         }
                     }
                 }

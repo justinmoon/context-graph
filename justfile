@@ -58,3 +58,7 @@ validate-incremental:
 validate-incremental-full:
     cargo build --release
     ./scripts/validate_incremental.py --commits HEAD~10,HEAD~8,HEAD~5,HEAD~3,HEAD~1,HEAD
+
+# Validate against the TypeScript repo (auto-clones to ~/.cache/context-graph/TypeScript)
+validate-incremental-typescript:
+    ./scripts/validate_incremental_typescript.sh
